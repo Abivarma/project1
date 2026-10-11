@@ -85,6 +85,12 @@ def _hardware(cfg: dict) -> str:
     return cfg.get("hardware") or f"{platform.system().lower()}-{platform.machine()}"
 
 
+def _with_limits(be: Any, entry: dict) -> Any:
+    """Per-backend subsets (e.g. a bigger, slower model on N_test=120); stated in the log and CSV n_test."""
+    be._entry_limits = {k: entry.get(k) for k in ("limit_test", "perm_n_items")}
+    return be
+
+
 def build_backends(cfg: dict) -> list[Any]:
     """Instantiate one backend object per (backend entry x mode)."""
     hw = _hardware(cfg)
@@ -118,10 +124,10 @@ def build_backends(cfg: dict) -> list[Any]:
             if entry.get("tokenizer") and entry["tokenizer"].get("hf_tokenizer_json"):
                 entry["tokenizer"] = {**entry["tokenizer"], "hf_tokenizer_json": _resolve_path(entry["tokenizer"]["hf_tokenizer_json"])}
             for mode in b.get("modes", ["json_schema", "logprob_scoring"]):
-                built.append(oa_from(entry, mode, hw, fallback=fb))
+                built.append(_with_limits(oa_from(entry, mode, hw, fallback=fb), b))
         elif kind == "exact_scorer":
             for s in b.get("scorings", ["codes"]):
-                built.append(exact_from(b, s))
+                built.append(_with_limits(exact_from(b, s), b))
         elif kind in ("c1", "jev", "claude"):
             # Contract change 5: make_backend(entry); it ignores name/kind/modes/quant.
             mod = importlib.import_module(f".backends.{kind}", __package__)
@@ -265,8 +271,17 @@ def _run(cfg, out_dir, run_id, log_path, limit_test, limit_cal, only, permutatio
     perm_items = test[: min(int(perm_cfg["n_items"]), len(test))]
     perms = _permutations(labels, int(perm_cfg["k"]), int(perm_cfg["seed"]))
 
+    all_test, all_perm_items = test, perm_items
     for be in backends:
         key = f"{be.name}:{be.mode}"
+        lim_b = getattr(be, "_entry_limits", None) or {}
+        test, perm_items = all_test, all_perm_items
+        if lim_b.get("limit_test") and int(lim_b["limit_test"]) < len(all_test):
+            test = sorted(random.Random(task.seed).sample(all_test, int(lim_b["limit_test"])), key=lambda i: i.id)
+            log.info("per-backend subset: n_test=%d (of %d), seeded sample", len(test), len(all_test))
+        if lim_b.get("perm_n_items") or test is not all_test:
+            n_perm = int(lim_b.get("perm_n_items") or perm_cfg["n_items"])
+            perm_items = test[: min(n_perm, len(test))]
         log.info("=" * 70)
         log.info("backend %s", key)
         train_time_s, n_per_class = None, None

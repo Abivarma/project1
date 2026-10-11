@@ -1,0 +1,74 @@
+# Model-size scaling on the Linux CPU container (EXECUTED here; owner LAB-A).
+# Same task, split, prompts and code as ci-cpu.yaml (0.5B); only the model changes. No per-model prompt tuning.
+#
+#   llama-server -m models/qwen2.5-1.5b-instruct-gguf/qwen2.5-1.5b-instruct-q4_k_m.gguf --port 8082 -c 4096 -t 4 --jinja \
+#       -a qwen2.5-1.5b-instruct-q4_k_m --parallel 1 &
+#   llama-server -m models/qwen2.5-3b-instruct-gguf/qwen2.5-3b-instruct-q4_k_m.gguf --port 8083 -c 4096 -t 4 --jinja \
+#       -a qwen2.5-3b-instruct-q4_k_m --parallel 1 &
+#   cd lab && .venv/bin/python -m jevlab run --config configs/ci-cpu-scaling.yaml
+#
+# Pinned model files (Apache-2.0 / Qwen research licence per repo card; GGUF only, no remote code):
+#   Qwen/Qwen2.5-1.5B-Instruct-GGUF @ 91cad51170dc346986eccefdc2dd33a9da36ead9  qwen2.5-1.5b-instruct-q4_k_m.gguf
+#   Qwen/Qwen2.5-3B-Instruct-GGUF   @ 7dabda4d13d513e3e842b20f0d435c732f172cbe  qwen2.5-3b-instruct-q4_k_m.gguf
+# The 3B model is ~6x the 0.5B compute on 4 vCPUs, so it runs on a seeded subset (limit_test: 120), stated in
+# the log and in the CSV's n_test column. Calibration always uses all 160 calibration items.
+# Every number this produces is a LAB number: illustrative only, not production, not Jev.
+run_name: ci-cpu-scaling
+hardware: linux-x86_64-4vcpu-cpu
+strict: false
+
+task: {name: clinc150, n_intents: 15, seed: 7}
+ece_bins: 10
+permutation: {k: 2, n_items: 60, seed: 11}
+cost: {power_w: 65, usd_per_kwh: 0.15, hardware_usd: 1500, amortisation_years: 3, utilisation: 0.5}
+
+_server_caps: &caps
+  supports_json_schema: true
+  supports_logprobs: true
+  max_top_logprobs: 20
+  logprob_mode: pre_constraint
+  label_scoring: top_logprobs
+  logprobs_endpoint: chat_completions
+
+backends:
+  - name: llama-server-1.5b
+    kind: openai_compat
+    server: llama-server
+    base_url: http://127.0.0.1:8082/v1
+    model: qwen2.5-1.5b-instruct-q4_k_m
+    quant: auto
+    modes: [json_schema, logprob_scoring]
+    capabilities: *caps
+    tokenizer: {gguf: models/qwen2.5-1.5b-instruct-gguf/qwen2.5-1.5b-instruct-q4_k_m.gguf}
+    captured_mass_threshold: 0.9
+    fallback: llamacpp-inproc-1.5b
+    max_tokens: {logprob_scoring: 4, json_schema: 24}
+    disable_thinking: true
+
+  - name: llama-server-3b
+    kind: openai_compat
+    server: llama-server
+    base_url: http://127.0.0.1:8083/v1
+    model: qwen2.5-3b-instruct-q4_k_m
+    quant: auto
+    modes: [logprob_scoring, json_schema]
+    limit_test: 120                   # seeded subset of the 240 test items (CPU time)
+    perm_n_items: 30
+    capabilities: *caps
+    tokenizer: {gguf: models/qwen2.5-3b-instruct-gguf/qwen2.5-3b-instruct-q4_k_m.gguf}
+    captured_mass_threshold: 0.9
+    fallback: null                    # low-mass items are FLAGGED and counted in the log
+    max_tokens: {logprob_scoring: 4, json_schema: 24}
+    disable_thinking: true
+
+  # Full-sequence label scoring for 1.5B, in-process (also the fallback above). Slow on CPU:
+  # run separately with --only "llamacpp-inproc-1.5b/full_sequence" if time allows.
+  - name: llamacpp-inproc-1.5b
+    kind: exact_scorer
+    gguf: models/qwen2.5-1.5b-instruct-gguf/qwen2.5-1.5b-instruct-q4_k_m.gguf
+    scorings: [full_sequence]
+    limit_test: 120
+    perm_n_items: 30
+    n_ctx: 2048
+    n_threads: 4
+    n_gpu_layers: 0
