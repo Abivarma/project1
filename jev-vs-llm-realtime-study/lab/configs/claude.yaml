@@ -1,0 +1,53 @@
+# Claude backend (PLAN rung L2: small tier, structured output, rubric cached, thinking off), owner LAB-B.
+# Real SDK: anthropic==1.13.0. Schema follows LAB-A's runner (configs/ci-cpu.yaml): one entry under
+# `backends:` with kind: claude, built by jevlab.backends.claude.make_backend(entry).
+#
+# Stub mode (default; no key, no network; every result is tagged MOCK:claude):
+#   python -m jevlab.stub_server --port 8765 &
+#   python -m jevlab run --config configs/claude.yaml
+# Live mode (UNTESTED here; needs your key; results tagged LIVE:claude:<model>):
+#   export ANTHROPIC_API_KEY=...   # Claude Console
+#   then set `mode: live` and `base_url: null` below.
+run_name: claude-stub
+hardware: linux-x86_64-4vcpu-cpu   # where the client runs
+strict: true
+task:
+  name: clinc150
+  n_intents: 15
+  seed: 7
+ece_bins: 10
+permutation: {k: 2, n_items: 60, seed: 11}
+
+backends:
+  - name: claude-haiku
+    kind: claude
+    modes: [vendor]
+    mode: stub                      # stub | live
+    base_url: http://127.0.0.1:8765 # stub address; live: null (https://api.anthropic.com or $ANTHROPIC_BASE_URL)
+    api_key_env: ANTHROPIC_API_KEY  # read in live mode only; stub mode always sends "stub-not-a-real-key"
+    model: claude-haiku-5-5
+
+    effort: low                     # output_config.effort
+    thinking: disabled              # disabled (PLAN L2 "thinking off"; allowed at effort <= high) | adaptive
+    max_tokens: 128                 # enough for {"label": ...}; use >= 1024 with thinking: adaptive
+    cache_ttl: 5m                   # 5m | 1h. NB: Haiku 5.5 caches only prefixes >= 512 tokens; this rubric (~340) is not cached
+
+    # Real-time settings. SDK defaults are a 10-minute timeout and 2 retries.
+    timeout_s: 1.5
+    max_retries: 0
+
+    # Confidence: the Messages API has NO token logprobs.
+    #   none             -> probs = null, ECE/Brier reported as N/A
+    #   self_consistency -> k samples (temperature 1), probs = vote fractions; costs k x tokens, ~2 calls of latency
+    #                       with sc_parallel (first sample alone to write the cache, then k-1 in parallel)
+    confidence: none
+    k: 5
+    sc_parallel: true
+
+    # [Guessing until R3 verifies] list prices, USD per 1M tokens, Haiku 5.5, prompts <= 100K tokens,
+    # https://platform.claude.com/docs/en/about-claude/pricing.md (fetched 2026-10-11)
+    usd_per_m_input: 0.10
+    usd_per_m_cache_write_5m: 0.125
+    usd_per_m_cache_write_1h: 0.20
+    usd_per_m_cache_read: 0.01
+    usd_per_m_output: 0.50

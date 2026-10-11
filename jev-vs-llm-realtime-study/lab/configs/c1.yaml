@@ -1,0 +1,42 @@
+# C1a classical baseline (owner: LAB-B). MEASURED on CPU here; provenance LAB:c1:<model>:fp32:linux-cpu-4vcpu
+# Schema follows LAB-A's runner (configs/ci-cpu.yaml): one entry under `backends:` with kind: c1,
+# built by jevlab.backends.c1.make_backend(entry) (its `sweep:` block is ignored by the runner).
+#
+# Standalone sweep:  python -m jevlab.backends.c1 --sweep --config configs/c1.yaml
+#   -> results/c1_sweep.csv (RunResult columns + n_per_class, n_per_class_min/max, n_train, train_time_s)
+#   -> results/c1_sweep.log
+# Via runner:        python -m jevlab run --config configs/c1.yaml   (single model, N = n_per_class)
+run_name: c1-cpu
+hardware: linux-x86_64-4vcpu-cpu
+strict: true
+task:                     # the P3 reference split: LAB-A's default task (same test items as the zero-shot scorer)
+  name: clinc150
+  n_intents: 15
+  seed: 7
+ece_bins: 10
+
+backends:
+  - name: c1a-tfidf
+    kind: c1
+    modes: [classifier]
+    features: tfidf          # tfidf | model2vec
+    n_per_class: 50          # P3 headline point; null = all train items
+    C: 10.0                  # fixed a priori, not tuned on calibration or test
+    word_ngrams: [1, 2]
+    char_ngrams: [2, 5]
+    latency_threads: 1       # per-item latency with single-threaded BLAS (one worker per core)
+    usd_per_vcpu_hour: 0.0425  # [Guessing; range 0.02-0.10] for the $-equivalent column
+    # pinned embedding model for features=model2vec (LL6: safetensors only, pinned revision, no remote code)
+    embed_repo: minishlab/potion-base-8M
+    embed_revision: bf8b056651a2c21b8d2565580b8569da283cab23
+
+    sweep:                   # python -m jevlab.backends.c1 --sweep
+      features: [tfidf, model2vec]
+      n_per_class: [10, 50, 200]   # capped at what the train split has (CLINC150: 100 per in-scope intent)
+      tasks:
+        - {name: clinc150, n_intents: 15, seed: 7}   # P3 reference split
+        - {name: banking77, n_intents: 15, seed: 7}  # context: Banking77 intents + CLINC OOS (cross-dataset)
+
+output:
+  csv: results/c1_sweep.csv
+  log: results/c1_sweep.log

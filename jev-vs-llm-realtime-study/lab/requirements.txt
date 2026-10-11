@@ -1,0 +1,10 @@
+# --- LAB-B: vendor backends (Jev, Claude), stub server, C1a baseline (pinned 2026-10-11) ---
+typesafe-sdk==0.7.4        # Jev / TypeSafe System One SDK (import typesafe_sdk); pulls httpx2, pydantic, tenacity
+anthropic==1.13.0          # Claude Messages API SDK (structured outputs via output_config.format)
+pydantic==2.14.0           # typesafe-sdk response models
+httpx2==2.13.1             # transport used by both vendor SDKs
+scikit-learn==1.9.1        # C1a: TF-IDF + logistic regression
+scipy==1.18.1              # C1a: log_softmax, fallback temperature search
+threadpoolctl==3.7.0       # C1a: single-threaded per-item latency
+model2vec==0.9.0           # C1a optional static embedding (minishlab/potion-base-8M, safetensors only)
+safetensors==0.8.0         # model2vec weights loader (no pickle)

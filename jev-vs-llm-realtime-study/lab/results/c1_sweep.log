@@ -1,0 +1,36 @@
+# C1a label-count sweep  (2026-10-11 06:19:35 UTC)
+# python 3.13.16  scikit-learn 1.9.1  numpy 2.5.4  platform Linux-6.18.44-fc-v114-x86_64-with-glibc2.39  cpus 4
+# Provenance LAB = measured in this container on public data; NOT a production number.
+# Latency: batch size 1, warm, single-threaded BLAS. usd_per_1k = mean_latency_s*1000/3600*usd_per_vcpu_hour (usd_per_vcpu_hour=0.0425 [Guessing; range 0.02-0.10]).
+# permutation_flip_rate=0.0 is structural (a classifier has no option order), not measured.
+# temperature scaling: jevlab.calibration.fit_temperature (LAB-A); fitted on the calibration split only
+
+## task clinc150-banking15+oos  labels=16  train_pool=1700  cal=160  test=240  (test split == load_task default: True)
+## source: CLINC150 (clinc/clinc_oos, config 'plus', CC-BY-3.0) @ 155b9c710419136e17307b80d0a13e68cd46b4ec; https://huggingface.co/datasets/clinc/clinc_oos
+c1-clinc150-tfidf-N10-raw                acc=0.8458 CI95=0.8000-0.8917 F1=0.8470 ECE=0.2746 Brier=0.3323 NLL=0.8408 T=1.000 p50=1.468ms p95=2.690ms cold=6.93ms train=0.766s n/class=10-10 n_train=160  LAB:c1:tfidf-w12-c25-lr:fp32:linux-cpu-4vcpu
+c1-clinc150-tfidf-N10-ts                 acc=0.8458 CI95=0.8000-0.8917 F1=0.8470 ECE=0.0533 Brier=0.2460 NLL=0.5832 T=0.381 p50=1.468ms p95=2.690ms cold=6.93ms train=0.766s n/class=10-10 n_train=160  LAB:c1:tfidf-w12-c25-lr:fp32:linux-cpu-4vcpu
+c1-clinc150-tfidf-N50-raw                acc=0.9083 CI95=0.8667-0.9458 F1=0.9072 ECE=0.1217 Brier=0.1599 NLL=0.3843 T=1.000 p50=1.537ms p95=2.893ms cold=6.45ms train=2.330s n/class=50-50 n_train=800  LAB:c1:tfidf-w12-c25-lr:fp32:linux-cpu-4vcpu
+c1-clinc150-tfidf-N50-ts                 acc=0.9083 CI95=0.8667-0.9458 F1=0.9072 ECE=0.0221 Brier=0.1258 NLL=0.2664 T=0.502 p50=1.537ms p95=2.893ms cold=6.45ms train=2.330s n/class=50-50 n_train=800  LAB:c1:tfidf-w12-c25-lr:fp32:linux-cpu-4vcpu
+c1-clinc150-tfidf-N200-raw               acc=0.9375 CI95=0.9042-0.9667 F1=0.9378 ECE=0.0912 Brier=0.1053 NLL=0.2580 T=1.000 p50=1.487ms p95=2.225ms cold=8.29ms train=3.609s n/class=100-200 n_train=1700  LAB:c1:tfidf-w12-c25-lr:fp32:linux-cpu-4vcpu
+c1-clinc150-tfidf-N200-ts                acc=0.9375 CI95=0.9042-0.9667 F1=0.9378 ECE=0.0230 Brier=0.0838 NLL=0.1843 T=0.609 p50=1.487ms p95=2.225ms cold=8.29ms train=3.609s n/class=100-200 n_train=1700  LAB:c1:tfidf-w12-c25-lr:fp32:linux-cpu-4vcpu
+c1-clinc150-model2vec-N10-raw            acc=0.8542 CI95=0.8083-0.9000 F1=0.8527 ECE=0.2715 Brier=0.2937 NLL=0.7298 T=1.000 p50=0.287ms p95=0.599ms cold=0.75ms train=0.021s n/class=10-10 n_train=160  LAB:c1:potion-base-8M@bf8b056-lr:fp32:linux-cpu-4vcpu
+c1-clinc150-model2vec-N10-ts             acc=0.8542 CI95=0.8083-0.9000 F1=0.8527 ECE=0.0438 Brier=0.2052 NLL=0.4647 T=0.389 p50=0.287ms p95=0.599ms cold=0.75ms train=0.021s n/class=10-10 n_train=160  LAB:c1:potion-base-8M@bf8b056-lr:fp32:linux-cpu-4vcpu
+c1-clinc150-model2vec-N50-raw            acc=0.9250 CI95=0.8875-0.9583 F1=0.9247 ECE=0.1161 Brier=0.1432 NLL=0.3443 T=1.000 p50=0.238ms p95=0.455ms cold=1.01ms train=0.644s n/class=50-50 n_train=800  LAB:c1:potion-base-8M@bf8b056-lr:fp32:linux-cpu-4vcpu
+c1-clinc150-model2vec-N50-ts             acc=0.9250 CI95=0.8875-0.9583 F1=0.9247 ECE=0.0301 Brier=0.1251 NLL=0.2808 T=0.480 p50=0.238ms p95=0.455ms cold=1.01ms train=0.644s n/class=50-50 n_train=800  LAB:c1:potion-base-8M@bf8b056-lr:fp32:linux-cpu-4vcpu
+c1-clinc150-model2vec-N200-raw           acc=0.9292 CI95=0.8958-0.9625 F1=0.9287 ECE=0.0614 Brier=0.1096 NLL=0.2590 T=1.000 p50=0.241ms p95=0.613ms cold=0.91ms train=2.228s n/class=100-200 n_train=1700  LAB:c1:potion-base-8M@bf8b056-lr:fp32:linux-cpu-4vcpu
+c1-clinc150-model2vec-N200-ts            acc=0.9292 CI95=0.8958-0.9625 F1=0.9287 ECE=0.0298 Brier=0.1031 NLL=0.2409 T=0.515 p50=0.241ms p95=0.613ms cold=0.91ms train=2.228s n/class=100-200 n_train=1700  LAB:c1:potion-base-8M@bf8b056-lr:fp32:linux-cpu-4vcpu
+
+## task banking77-n15+clincoos  labels=16  train_pool=1999  cal=160  test=240  (test split == load_task default: True)
+## source: Banking77 (PolyAI, CC-BY-4.0) via parquet mirror legacy-datasets/banking77 @ f54121560de48f2852f90be299010d1d6dc612ec; out_of_scope from CLINC150 (clinc/clinc_oos, CC-BY-3.0) @ 155b9c710419136e17307b80d0a13e68cd46b4ec
+c1-banking77-tfidf-N10-raw               acc=0.8792 CI95=0.8375-0.9167 F1=0.8768 ECE=0.3282 Brier=0.3260 NLL=0.8263 T=1.000 p50=1.527ms p95=2.973ms cold=6.11ms train=1.178s n/class=10-10 n_train=160  LAB:c1:tfidf-w12-c25-lr:fp32:linux-cpu-4vcpu
+c1-banking77-tfidf-N10-ts                acc=0.8792 CI95=0.8375-0.9167 F1=0.8768 ECE=0.0270 Brier=0.1884 NLL=0.4385 T=0.328 p50=1.527ms p95=2.973ms cold=6.11ms train=1.178s n/class=10-10 n_train=160  LAB:c1:tfidf-w12-c25-lr:fp32:linux-cpu-4vcpu
+c1-banking77-tfidf-N50-raw               acc=0.9458 CI95=0.9167-0.9708 F1=0.9464 ECE=0.1438 Brier=0.1229 NLL=0.3209 T=1.000 p50=1.682ms p95=2.402ms cold=2.45ms train=2.277s n/class=49-50 n_train=799  LAB:c1:tfidf-w12-c25-lr:fp32:linux-cpu-4vcpu
+c1-banking77-tfidf-N50-ts                acc=0.9458 CI95=0.9167-0.9708 F1=0.9464 ECE=0.0116 Brier=0.0787 NLL=0.1611 T=0.399 p50=1.682ms p95=2.402ms cold=2.45ms train=2.277s n/class=49-50 n_train=799  LAB:c1:tfidf-w12-c25-lr:fp32:linux-cpu-4vcpu
+c1-banking77-tfidf-N200-raw              acc=0.9750 CI95=0.9542-0.9917 F1=0.9745 ECE=0.0944 Brier=0.0640 NLL=0.1881 T=1.000 p50=1.690ms p95=2.456ms cold=6.73ms train=4.971s n/class=49-200 n_train=1999  LAB:c1:tfidf-w12-c25-lr:fp32:linux-cpu-4vcpu
+c1-banking77-tfidf-N200-ts               acc=0.9750 CI95=0.9542-0.9917 F1=0.9745 ECE=0.0066 Brier=0.0420 NLL=0.1092 T=0.485 p50=1.690ms p95=2.456ms cold=6.73ms train=4.971s n/class=49-200 n_train=1999  LAB:c1:tfidf-w12-c25-lr:fp32:linux-cpu-4vcpu
+c1-banking77-model2vec-N10-raw           acc=0.9208 CI95=0.8833-0.9542 F1=0.9208 ECE=0.2636 Brier=0.2096 NLL=0.5424 T=1.000 p50=0.261ms p95=0.571ms cold=0.80ms train=0.024s n/class=10-10 n_train=160  LAB:c1:potion-base-8M@bf8b056-lr:fp32:linux-cpu-4vcpu
+c1-banking77-model2vec-N10-ts            acc=0.9208 CI95=0.8833-0.9542 F1=0.9208 ECE=0.0343 Brier=0.1171 NLL=0.2555 T=0.304 p50=0.261ms p95=0.571ms cold=0.80ms train=0.024s n/class=10-10 n_train=160  LAB:c1:potion-base-8M@bf8b056-lr:fp32:linux-cpu-4vcpu
+c1-banking77-model2vec-N50-raw           acc=0.9750 CI95=0.9542-0.9917 F1=0.9748 ECE=0.1174 Brier=0.0813 NLL=0.2138 T=1.000 p50=0.279ms p95=1.190ms cold=1.05ms train=0.372s n/class=49-50 n_train=799  LAB:c1:potion-base-8M@bf8b056-lr:fp32:linux-cpu-4vcpu
+c1-banking77-model2vec-N50-ts            acc=0.9750 CI95=0.9542-0.9917 F1=0.9748 ECE=0.0177 Brier=0.0552 NLL=0.1164 T=0.468 p50=0.279ms p95=1.190ms cold=1.05ms train=0.372s n/class=49-50 n_train=799  LAB:c1:potion-base-8M@bf8b056-lr:fp32:linux-cpu-4vcpu
+c1-banking77-model2vec-N200-raw          acc=0.9667 CI95=0.9417-0.9875 F1=0.9667 ECE=0.0600 Brier=0.0671 NLL=0.1616 T=1.000 p50=0.241ms p95=0.632ms cold=1.08ms train=0.925s n/class=49-200 n_train=1999  LAB:c1:potion-base-8M@bf8b056-lr:fp32:linux-cpu-4vcpu
+c1-banking77-model2vec-N200-ts           acc=0.9667 CI95=0.9417-0.9875 F1=0.9667 ECE=0.0177 Brier=0.0607 NLL=0.1703 T=0.309 p50=0.241ms p95=0.632ms cold=1.08ms train=0.925s n/class=49-200 n_train=1999  LAB:c1:potion-base-8M@bf8b056-lr:fp32:linux-cpu-4vcpu

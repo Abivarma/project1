@@ -1,0 +1,47 @@
+# Jev (TypeSafe System One) backend, owner LAB-B. Real SDK: typesafe-sdk==0.7.4.
+# Schema follows LAB-A's runner (configs/ci-cpu.yaml): one entry under `backends:` with kind: jev,
+# built by jevlab.backends.jev.make_backend(entry).
+#
+# Stub mode (default; no key, no network; every result is tagged MOCK:jev):
+#   python -m jevlab.stub_server --port 8765 &
+#   python -m jevlab run --config configs/jev.yaml
+# Live mode (UNTESTED here; needs your key; results tagged LIVE:jev:jev-1.13.0):
+#   export TYPESAFE_API_KEY=...    # https://console.typesafe.ai/ (early access, waitlist)
+#   then set `mode: live` and `base_url: null` below.
+run_name: jev-stub
+hardware: linux-x86_64-4vcpu-cpu   # where the client runs; Jev itself runs at the vendor
+strict: true                       # vendor probe failures abort the run
+task:
+  name: clinc150
+  n_intents: 15
+  seed: 7
+ece_bins: 10
+permutation: {k: 2, n_items: 60, seed: 11}
+
+backends:
+  - name: jev
+    kind: jev
+    modes: [vendor]
+    mode: stub                      # stub | live
+    base_url: http://127.0.0.1:8765 # stub address; live: null (SDK default https://api.typesafe.ai or $TYPESAFE_BASE_URL)
+    api_key_env: TYPESAFE_API_KEY   # read in live mode only; stub mode always sends "stub-not-a-real-key"
+    model: jev-1.13.0               # pinned version, NOT jev-latest (the alias moves)
+
+    # Real-time settings. SDK defaults (10 s timeout per HTTP operation; 2 retries with 0.5-5 s backoff; 30 s total
+    # retry budget) would break a 300 ms decision SLO. On timeout/429/529 the backend returns label=None
+    # (counted in invalid_rate) so the caller falls back (C1a / L2) instead of waiting.
+    timeout_s: 0.25                 # per HTTP operation (connect/read/write/pool), not a whole-request deadline
+    max_retries: 0                  # 0 on the critical path; 1 only if the budget allows
+    retry_budget_s: 0.3             # RetryPolicy.timeout: total budget incl. backoff
+    backoff_initial_s: 0.02
+    backoff_max_s: 0.05
+
+    # Optional speculative fan-out (PLAN P6): extra questions over the SAME state in one request.
+    fanout_questions: {}
+    #  needs_human: {type: noul, instructions: "Does the customer ask to speak to a human agent?"}
+    #  urgency: {type: score, instructions: "How urgent is this message?", criteria: [low, medium, high]}
+
+    # [Guessing until R3 verifies] list price, https://docs.typesafe.ai/models.md (2026-10-11):
+    # $0.042 per 1M input tokens; output tokens reported but not billed.
+    usd_per_m_input: 0.042
+    usd_per_m_output: 0.0

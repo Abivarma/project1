@@ -1,0 +1,82 @@
+# Local Lab smoke run on the Linux CPU container (EXECUTED here; owner LAB-A).
+#
+#   cd lab && .venv/bin/python -m jevlab run --config configs/ci-cpu.yaml
+#
+# Servers must be running first (see LEARNING.md "Linux CPU smoke run"):
+#   llama-server -m models/qwen2.5-0.5b-instruct-gguf/qwen2.5-0.5b-instruct-q4_k_m.gguf \
+#       --host 127.0.0.1 --port 8081 -c 4096 -t 4 --jinja -a qwen2.5-0.5b-instruct-q4_k_m --parallel 1
+#   OLLAMA_MODELS=models/ollama ollama serve      (then: ollama create qwen2.5-0.5b-lab:q4_k_m -f Modelfile)
+#
+# Every number this produces is a LAB number: illustrative only, not production, not Jev.
+run_name: ci-cpu
+hardware: linux-x86_64-4vcpu-cpu
+strict: false              # true = abort on the first failed probe; false = log loudly, continue, exit code 2
+
+task:
+  name: clinc150           # CLINC150 banking domain (15 intents) + CLINC out-of-scope
+  n_intents: 15
+  seed: 7
+  # per_class: {train: 100, calibration: 10, test: 15}   # defaults -> 160 calibration, 240 test
+
+ece_bins: 10               # equal-mass bins
+permutation: {k: 2, n_items: 60, seed: 11}   # first permutation = reversed option order
+
+# [Guessing] parameters for the local $-equivalent (see the run log for the formula)
+cost: {power_w: 65, usd_per_kwh: 0.15, hardware_usd: 1500, amortisation_years: 3, utilisation: 0.5}
+
+# The model is ONE line per backend. Model file pinned: Qwen/Qwen2.5-0.5B-Instruct-GGUF
+# @ 9217f5db79a29953eb74d5343926648285ec7e67, qwen2.5-0.5b-instruct-q4_k_m.gguf
+# sha256 74a4da8c9fdbcd15bd1f6d01d621410d31c6fc00986f5eb687824e7b93d7a9db (Apache-2.0)
+backends:
+  - name: llama-server
+    kind: openai_compat
+    server: llama-server
+    base_url: http://127.0.0.1:8081/v1
+    model: qwen2.5-0.5b-instruct-q4_k_m
+    quant: auto                       # read from /props (model_ftype)
+    modes: [json_schema, logprob_scoring]
+    capabilities:
+      supports_json_schema: true
+      supports_logprobs: true
+      max_top_logprobs: 20            # OpenAI-style cap; llama-server itself allows more via n_probs
+      logprob_mode: pre_constraint    # verified here: grammar-forced tokens report raw-model logprobs
+      label_scoring: top_logprobs
+      logprobs_endpoint: chat_completions
+    tokenizer: {gguf: models/qwen2.5-0.5b-instruct-gguf/qwen2.5-0.5b-instruct-q4_k_m.gguf}
+    captured_mass_threshold: 0.9
+    fallback: llamacpp-inproc         # full-sequence scoring for items below the threshold
+    max_tokens: {logprob_scoring: 4, json_schema: 24}
+    disable_thinking: true
+
+  - name: ollama
+    kind: openai_compat
+    server: ollama
+    base_url: http://127.0.0.1:11434/v1
+    model: qwen2.5-0.5b-lab:q4_k_m    # the SAME GGUF imported with `ollama create` (Modelfile: FROM <gguf>)
+    quant: auto                       # read from /api/show
+    modes: [json_schema, logprob_scoring]
+    capabilities:
+      supports_json_schema: true
+      supports_logprobs: true
+      max_top_logprobs: 20            # verified here: top_logprobs > 20 -> HTTP 400
+      logprob_mode: pre_constraint    # verified here on 0.40.2
+      label_scoring: top_logprobs
+      logprobs_endpoint: chat_completions
+    tokenizer: {gguf: models/qwen2.5-0.5b-instruct-gguf/qwen2.5-0.5b-instruct-q4_k_m.gguf}
+    captured_mass_threshold: 0.9
+    fallback: llamacpp-inproc
+    max_tokens: {logprob_scoring: 4, json_schema: 24}
+    disable_thinking: true
+    force_cold_start: true            # unload (keep_alive 0) before the probe, so cold latency = model load + first call
+
+  - name: llamacpp-inproc             # agreement reference + full-sequence scorer, SAME GGUF, in-process
+    kind: exact_scorer
+    gguf: models/qwen2.5-0.5b-instruct-gguf/qwen2.5-0.5b-instruct-q4_k_m.gguf
+    scorings: [codes, full_sequence]
+    n_ctx: 2048
+    n_threads: 4
+    n_gpu_layers: 0
+
+agreement:
+  server: "llama-server:logprob_scoring"
+  reference: "llamacpp-inproc/codes:exact_scoring"
