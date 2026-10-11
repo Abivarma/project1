@@ -146,6 +146,8 @@ There is **one fan-out request per message** for the input side (Request A). FR8
 | **Request B per FR8 chunk** (overhead + 100–300 tokens of state [Guessing] + 3 Nouls) | 521–885 | as above |
 | Caching | **None on Jev.** The state and rubric are re-billed on every request (JEV-004). Generation: 3,000 cached + 500 uncached input, 250 output | R3 BoE |
 
+All rows below are derived: tokens from the component table × $0.042/MTok (JEV-003) × the 1×/3×/10× price sweep (PLAN §4), plus $0.0038 generation (R3 BoE).
+
 | Configuration | Requests per msg | Tokens per msg | Decisions only, at 1× / 3× / 10× Jev price | Decisions + generation, at 1× / 3× / 10× | Decision share at 1× |
 |---|---|---|---|---|---|
 | Lean: 16 intents, no mirrors, FR8 in 1 chunk | 2 | 2,064–2,898 | $0.000087–0.000122 / $0.00026–0.00037 / $0.00087–0.0012 | $0.0039 / $0.0041–0.0042 / $0.0047–0.0050 | 2.2–3.1% |
@@ -157,6 +159,8 @@ There is **one fan-out request per message** for the input side (Request A). FR8
 - **J2 adds** e_LLM × $0.0016–0.004 (the floor is the Sonnet 5.5 cached decision cost, ECO-004; the extra is reasoning tokens [Guessing]), i.e. +$0.00008–0.0012 at e_LLM = 5–30%. It also adds **e_human × $8–23 (ECO-077)**: at 1% of messages that is +$0.08–0.23 per message, **20–60× the entire J1 bill**. Coverage, not token price, is J2's cost lever.
 
 ### 3.3 Rate-limit headroom (defaults 80 req/s and 100K tok/s, JEV-005, JEV-006; peaks from requirements §5)
+
+All rows are derived: peak msg/s (requirements §5) × requests and tokens per message (§3.2), against 80 req/s and 100K tok/s (JEV-005, JEV-006).
 
 | Volume | Peak msg/s | Lean: req/s → headroom | Lean: tok/s → headroom | Default: req/s → headroom | Default: tok/s → headroom | Default config needs this multiple of the default limits (1.5× burst margin) |
 |---|---|---|---|---|---|---|
@@ -179,7 +183,7 @@ There is **one fan-out request per message** for the input side (Request A). FR8
 - Never retry a 429 or 529 on the path: fall back immediately and do not stack retry loops (JEV-102). Honour `retry-after` only off-path. Hedge Request A after p90 only when request headroom is ≥ 1.5. HTTP/2 with pre-warmed pools (JEV-100).
 - Circuit breaker opens at > 5% [Guessing: 2–10%] timeouts, 429s or 529s over 10 s; half-open with 1% probe traffic.
 
-| Decision | Deadline | Fallback chain on 429 / 529 / timeout / breaker open | Fail mode (requirements §4.1) |
+| Decision | Deadline (NFR-6: 250 ms per call; NFR-4: 150 ms for FR8) | Fallback chain on 429 / 529 / timeout / breaker open | Fail mode (requirements §4.1) |
 |---|---|---|---|
 | FR1 injection, self-harm | A: 250 ms | The in-region injection classifier always runs. If uncertain, send the safe template or a human | **Closed** |
 | FR1 abuse | A: 250 ms | Classifier, then the tone-safe template | Closed (template) |
@@ -279,14 +283,14 @@ Latency does not police fan-out: adding questions is nearly free in time. **Budg
 
 - **Per-decision log (FR9, NFR-12):** request ID, region, the response `model` field, question key and rubric hash, option-order seed, full probabilities, confidence, mirror agreement, client-side latency, `usage` tokens, cost, backend used (Jev or a fallback), gate outcome, escalation target.
 - **Dashboards:** p50/p95/p99 per region and request type (A or B); 429/529/timeout and breaker-trip rates; request and token headroom against the limits; confidence-distribution drift (PSI per decision); permutation disagreement rate; coverage and escalation rate per decision; consumer hit-rate; decision spend share.
-- **Alerts:** safety recall < 0.98 on the rolling labelled sample, p95 > 300 ms, headroom < 1.5, or a mismatch on the `model` field.
+- **Alerts:** safety recall < 0.98 on the rolling labelled sample (NFR-7), p95 > 300 ms (NFR-1), headroom < 1.5 (requirements §5), or a mismatch on the `model` field.
 
 | Stage | Gate to advance | Rollback trigger |
 |---|---|---|
 | 1. Golden set | Stratified by intent; slices for safety, injection, JevOut-style additions, Hindi and code-mixed text, long history, and dates. NFR-7 and NFR-8 pass offline; permutation flip rate and 5-run agreement measured | — |
 | 2. Shadow | 1–4 weeks [Guessing]. Jev runs alongside the incumbent (C1a or L2) with no effect on users. Agreement and calibration are compared against human labels | — |
 | 3. Canary (US-West first) | 1% → 5% of traffic, with gates at each step | Safety recall < 0.98; escalation rate over budget; 429/529 > 1% [Guessing]; p95 > 300 ms |
-| 4. Ramp | 25% → 100% in US regions. The EU and India stay on in-region backends | Same triggers. The kill switch is the port's backend setting |
+| 4. Ramp | 25% → 100% in US regions [Guessing: step sizes]. The EU and India stay on in-region backends | Same triggers. The kill switch is the port's backend setting |
 | 5. Steady state | Recalibrate on every version change (§4.4); quarterly re-baseline | — |
 
 ## 8. Security and residency
