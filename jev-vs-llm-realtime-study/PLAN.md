@@ -137,7 +137,7 @@ Each hypothesis has a falsification rule fixed before Phase 3. No recommendation
 | P2 | Including generation, J1 cuts the total per-message bill by < 5% compared with L2 (cached small tier) | The modelled saving is ≥ 5% at default parameters |
 | P3 | With N labelled examples per intent, C1a matches the best zero-shot decision model within 2 accuracy points at lower cost and latency. N is swept over {0, 10, 50, 200}. The zero-shot reference is the lab's zero-shot scorer, measured on the same split; vendor or literature Jev numbers are context only | C1a at N=50 is more than 2 points below the lab zero-shot scorer on the held-out test split (bootstrap 95% CI) |
 | P4 | J1 cannot serve 2,000 msg/s peak at default rate limits | Headroom ratio is ≥ 1 |
-| P5 | Jev's advantage is largest at zero labels with a churning taxonomy | In the M1 crossover model, Jev's cost per correct automated decision relative to C1a/D1 does **not** fall as labels increase (N = 0 to 200) and as taxonomy churn falls (monthly to never) |
+| P5 | Jev's advantage is largest at zero labels with a churning taxonomy | In the M1 crossover model, Jev's cost per correct automated decision relative to C1a/D1 does **not rise** (i.e. Jev's advantage does not shrink) as labels increase (N = 0 to 200) and as taxonomy churn falls (monthly to never). *Sign corrected in v2.2 after the A3 flag.* |
 | P6 | Jevons-style speculative fan-out raises decision spend k×, while the total bill stays dominated by generation | Decisions exceed 25% of the bill at k ≤ 5 |
 
 ## 4. Metrics
@@ -278,6 +278,9 @@ Source: `reviews/phase-1-factcheck-critic.md`, "Lead-level corrections" and "Top
 
 **Pattern D1**
 - The vendor's AutoResearch cookbook is *not* distillation (Jev stays in the serving path). D1 is our own pattern and has no vendor precedent.
+
+**P3 reference model**
+- P3's zero-shot reference must not be the 0.5B smoke model alone. Use the lab's model-size scaling run plus the ledger's zero-/few-shot LLM and decision-API results on BANKING77/CLINC150, with task differences caveated.
 
 **Superseded**
 - phase-0-plan-critic Risk 3.2 ("no public calibration metrics") no longer holds.
