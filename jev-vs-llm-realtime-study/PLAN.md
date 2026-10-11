@@ -1,6 +1,6 @@
 # Plan v2: Jev (TypeSafe AI "System One") vs LLMs for real-time experiences
 
-Status: **v2**. It applies the Phase 0 plan-critic review in `reviews/phase-0-plan-critic.md` (verdict PASS-WITH-FIXES). Each fix's disposition is in §9.
+Status: **v2.1**. v2.1 applies the six v2 re-check edits. It applies the Phase 0 plan-critic review in `reviews/phase-0-plan-critic.md` (verdict PASS-WITH-FIXES). Each fix's disposition is in §9.
 
 History:
 - v0 wrongly read "Jev" as JEPA.
@@ -63,8 +63,7 @@ These go into the study's interview script and `requirements.md`:
 
 ### Defaults when the answers are unknown
 - **Volumes:** a sweep over 1M, 10M and 50M messages/day, where a message is one user turn. 50M/day is about 579 msg/s on average, and the assumed peak is 3.5× that, about 2,000 msg/s.
-- **Regions:** US-West, US-East, EU and India.
-  - India is flagged as likely for this user [Guessing, from repo commit timezone].
+- **Regions:** US-West, US-East, EU and India. The user has been asked for their region.
   - From India, the round trip to a US-West-only service alone is about 200–280 ms [verify in R3].
 - **Parameter card:** a "bring your own workload" card in M1 lets the user plug in their own numbers.
 
@@ -107,7 +106,7 @@ Then the system generates a reply (System 2).
 | L2m | LLM | Mid-tier, batched structured output | Mid | Rung c |
 | L2 | LLM | Small tier (Haiku 5.5 class and the cheapest OpenAI/Gemini tiers), batched, rubric cached, thinking off | Mid, streamed | Rung d: **the fair API-LLM baseline** |
 | L2c | LLM | L2 with confidence escalation to frontier (confidence = logprobs where the provider has them, otherwise k-sample self-consistency at k× cost) | Mid | Cascade peer to J2 |
-| L3 | Neutral | Self-hosted small open-weight LLM, option scoring in one forward pass, full distribution, in-region | Mid | Rung e: closest technical rival. **Also the Local Lab** |
+| L3 | Neutral | Self-hosted small open-weight LLM, option scoring in one forward pass, full distribution, in-region | Mid | Rung e: closest technical rival. **Production numbers come from the ledger; Local Lab results are illustrative only** |
 | C1a | Neutral | TF-IDF/embeddings + logistic regression (few labels) | Mid | Rung f. **Measured here on CPU** |
 | C1b | Neutral | Fine-tuned small encoder | Mid | Rung f. Estimated from the literature |
 | J1 | Jev | Jev, one fan-out request | Mid | — |
@@ -123,12 +122,12 @@ Each hypothesis has a falsification rule fixed before Phase 3. No recommendation
 
 | ID | Hypothesis | Falsified if |
 |---|---|---|
-| P1 | From US-West, Jev's decision-path p95 is ≤ 300 ms while the best API-LLM decision path (L2) is > 300 ms | Modelled L2 p95 is ≤ 300 ms, or Jev p95 is > 300 ms, using ledger latency distributions |
-| P1-IN | From India, neither Jev nor a US-hosted API LLM meets a 300 ms decision p95; only in-region L3 or C1 does | Jev p95 from India is ≤ 300 ms |
+| P1 | From US-West, Jev's decision-path p95 is ≤ 300 ms while the best API-LLM decision path (L2) is > 300 ms. **Modelled, not measured:** Jev publishes no p95, so the model reports the threshold at which the verdict flips | Modelled L2 p95 is ≤ 300 ms, or Jev p95 is > 300 ms, using ledger latency distributions |
+| P1-IN | From India, neither Jev nor a US-hosted API LLM meets a 300 ms decision p95. Only an in-region option does: an India-region-hosted API LLM (e.g. a cloud region in Mumbai), L3 or C1 | Jev p95 from India is ≤ 300 ms, or no in-region option meets it |
 | P2 | Including generation, J1 cuts the total per-message bill by < 5% compared with L2 (cached small tier) | The modelled saving is ≥ 5% at default parameters |
-| P3 | With ≥ N labelled examples per intent (N reported), C1a matches the best zero-shot decision model within 2 accuracy points at lower cost and latency | Measured on the public dataset; compared against vendor/literature numbers, with caveats |
+| P3 | With N labelled examples per intent, C1a matches the best zero-shot decision model within 2 accuracy points at lower cost and latency. N is swept over {0, 10, 50, 200}. The zero-shot reference is the lab's zero-shot scorer, measured on the same split; vendor or literature Jev numbers are context only | C1a at N=50 is more than 2 points below the lab zero-shot scorer on the held-out test split (bootstrap 95% CI) |
 | P4 | J1 cannot serve 2,000 msg/s peak at default rate limits | Headroom ratio is ≥ 1 |
-| P5 | Jev's advantage is largest at zero labels with a churning taxonomy | The cascade sim and crossover analysis show otherwise |
+| P5 | Jev's advantage is largest at zero labels with a churning taxonomy | In the M1 crossover model, Jev's cost per correct automated decision relative to C1a/D1 does **not** fall as labels increase (N = 0 to 200) and as taxonomy churn falls (monthly to never) |
 | P6 | Jevons-style speculative fan-out raises decision spend k×, while the total bill stays dominated by generation | Decisions exceed 25% of the bill at k ≤ 5 |
 
 ## 4. Metrics
@@ -140,7 +139,7 @@ Each hypothesis has a falsification rule fixed before Phase 3. No recommendation
   - Latency vs state size.
   - Critical path vs off-path: run the guardrail in parallel with speculative generation.
 - **Tokens and charges:**
-  - State tokens and question tokens kept separate.
+  - State tokens and question tokens kept separate. A Jev request is modelled as fixed overhead (about 300 tokens) + state + about 57 tokens per question. These figures are inferred from the `api.md` usage examples [Guessing; verify in R1].
   - LLM caching modelled; Jev gets no cache discount.
   - Thinking tokens counted.
   - **$ per message (or per 1K characters), never $ per token across vendors.**
@@ -238,6 +237,7 @@ Detailed, checkable gate criteria are in `reviews/phase-0-plan-critic.md` under 
 | 10 Quality metrics | **Accepted** |
 | 11 Harness de-risking | **Accepted**, merged into the Local Lab (§6) |
 | 12 Process | **Accepted.** C1/L3/D1 move to a neutral A3; task list updated |
-| Phase 2 gate "full diagram per architecture" | **Modified.** One diagram per family, plus per-architecture delta tables (latency, tokens, failure modes). Reason: 13 diagrams would be scope creep with little interview value |
-| C1b measured | **Modified.** C1b (fine-tuned encoder) is estimated from the literature, not trained here. Reason: CPU time budget. C1a is measured |
+| Phase 2 gate "full diagram per architecture" | **Modified.** At least 4 family diagrams: LLM-text, Jev-text, neutral, and voice (V-S2S and V-casc together). Per-architecture delta tables still mark the critical path, per-hop latency, token flow, fallback and deadline. Reason: 13 diagrams would be scope creep with little interview value |
+| C1b measured | **Modified.** C1b (fine-tuned encoder) is estimated from the literature, not trained here, tagged at most [Likely] with its conditions. P3 rests on the measured C1a. Reason: CPU time budget |
 | LL1–LL8 | **Accepted** |
+| v2 re-check R1–R6 | **Accepted** (P1 marked modelled with its flip threshold; India-region LLM added to P1-IN; P3/P5 given concrete rules; L3 lab results illustrative only; Jev token overhead modelled; user-location guess removed) |

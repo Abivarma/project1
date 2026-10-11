@@ -516,3 +516,51 @@ The silent-failure case means the harness must **probe capabilities and fail lou
 | 17 | §0 "early access" | Correct (blog: early access, with a waitlist). | Add the implication: the user may not be able to get a key soon, so the harness live mode may be blocked. |
 
 Claims in §0 verified as correct: text-only input; three primitives; $0.042/MTok input with free output; 64k request / 32k state-plus-longest-question context; 100K tok/s and 80 req/s, dynamically adjusted; RLCD with no customer fine-tuning; same weights for all accounts; jaggedness list (literal reading, math, dates, indirection, context rot, adversarial content, option order, generation).
+
+---
+
+## v2 re-check (2026-10-11)
+
+**Verdict: PASS-WITH-FIXES.** The remaining edits are small. The lead can apply them directly; no further plan-critic loop is needed, and Phase 1 may start once they are in.
+
+### Blocking fixes: all resolved
+| Fix | v2 location | Status |
+|---|---|---|
+| 1 Comparator ladder | §2 (rungs a–f), §0.3 | Resolved |
+| 2 Capacity as a gate | §1 volume sweep, P4, §4 Operations (deadlines, fallbacks, fail-open/fail-closed) | Resolved |
+| 3 Capability matrix and LLM confidence method | Phase 1 row for R2; L2c (logprobs, or self-consistency at k× cost) | Resolved |
+| 4 Missing architectures | L1b, L2m, L2c, L3, C1a/b, D1, V-S2S, V-casc; L1 relabelled | Resolved |
+| 5 Pre-registration | §3, P1–P6 | Resolved; three rules need tightening (R1–R3 below) |
+| 6 Unknown use case | §1 (assumed exemplar, clarification questions, defaults, parameter card, losses inside the scenario) | Resolved |
+| 7 Secondary scenarios | §1 table | Resolved |
+| 8 Latency | §4 | Resolved |
+| 9 Tokens and charges | §4 | Resolved; one gap (R5) |
+| 10 Quality | §4 | Resolved |
+| 11 Harness | §6 (stub-server SDK tests, public data, MOCK/LAB tags, C1a measured) | Resolved |
+| 12 Process | §5 (fresh-context critics, at most 2 FAIL loops, untrusted-data rule, neutral A3); task list checked and updated (#3/#4 no longer say JEPA; #7 Local Lab added) | Resolved |
+| LL1–LL8 | §6, Phase 1/3 rows | Resolved |
+
+### The two modifications
+1. **One diagram per family plus per-architecture delta tables: acceptable, with two conditions.**
+   - (a) There must be at least **four** diagrams: LLM-text, Jev-text, neutral, and **voice**. The voice diagram shows V-S2S and V-casc side by side, because their topologies differ structurally from the text paths.
+   - (b) Every per-architecture delta table must still mark the **critical path** and include rows for per-hop latency, token flow (state vs question, cached vs uncached), failure/fallback, and deadline/rate-limit handling. The fairness checklist stays per architecture.
+2. **C1b estimated from the literature: acceptable.**
+   - C1b rows must record their conditions (dataset, model, hardware, label count) and be tagged at most [Likely].
+   - P3 must rest on the measured C1a, never on C1b.
+
+### Remaining required edits (small)
+- **R1: P1 relies on a Jev p95 that does not exist.** The vendor gives only "about 100 ms for most queries" and "70–500 ms". Label P1's verdict "modelled under assumed distributions", and report the **flip threshold**: the Jev p95 and L2 p95 values at which the verdict reverses.
+- **R2: P1-IN is unfair to the LLM side as written.** It compares Jev against *US-hosted* API LLMs only. Add an **in-region hosted API LLM** option, e.g. a cloud provider's India region or inference geography, verified in R3 for each provider. Otherwise the result is true by construction.
+- **R3: P3 and P5 have methods but no falsification rules.**
+  - **P3:** pre-specify N ∈ {5, 10, 20, 50, all} labels per intent. Make the primary comparator the **lab's best local zero-shot scorer on the same split**, with literature zero-shot numbers as secondary context only (different setups). State the rule: "falsified if C1a at N=20 is more than 2 points below that comparator".
+  - **P5:** state a concrete crossover rule, e.g. "falsified if C1a or D1 beats J1 on cost at equal accuracy at ≤ X labels per intent and taxonomy churn ≥ Y%/month". Fix X and Y before Phase 3.
+- **R4: Lab results must not stand in for production L3.** §2 calls L3 "also the Local Lab". Add: "L3 production latency and cost come from ledger GPU-serving benchmarks; lab results (Mac or CPU, tiny models) are illustrative only (LL5)."
+- **R5: New token-model gap (R1/M1).** Jev's input usage appears to include a **fixed per-request overhead**, possibly a prompt template:
+  - The `api.md` examples show **296–318 input tokens** for a state of about 10 words and one short question.
+  - The parallel-questions cookbook implies only about 57 tokens per *additional* question. It billed about 11.8K tokens batched vs about 11.15K per single-question call, derived from the dollar figures.
+  - The doc examples may be illustrative, so tag this [Likely, derived].
+  - Model it as `tokens = overhead_per_request + state + Σ per_question`, with ranges. For short support messages the overhead can rival the message itself, and it affects Jev's position on the comparator ladder.
+- **R6: Remove the inference about the user's location.** §1 says "India is flagged as likely for this user [Guessing, from repo commit timezone]". Do not carry a location inference from metadata into STUDY.md or the HTML view. Keep India in the region sweep as "a region of interest", and ask the user.
+
+### Nothing else inconsistent found
+Spot-checked and consistent: the v2 §0 facts against the docs; the phase table against the gate criteria; LL8 (start in parallel, ~30% cap); task list #1–#7.
