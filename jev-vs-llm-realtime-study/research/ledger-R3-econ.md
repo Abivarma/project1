@@ -43,7 +43,7 @@
 | AWS Transcribe tier table | Prices are client-side templates | Used the page's own worked example ($0.01/min) |
 | GCP GPU/VM pricing (curl) | Client-side | Firecrawl rendered the **us-central1 table only**. Mumbai prices not captured |
 | AWS SageMaker Ground Truth pricing (EN and KO) | Page now redirects to an overview with no per-object prices. A docs payment page came back empty | Used the Gilardi et al. MTurk comparison |
-| Vertex AI generative locations | Page lists Mumbai (asia-south1), but the availability icons could not be parsed | **Mumbai availability per model unverified** |
+| Vertex AI generative locations | Page lists Mumbai (asia-south1), but the availability icons could not be parsed | **Resolved after Critic-1:** the Google data-residency table was parsed instead (ECO-089) |
 | NVIDIA NIM performance doc; NVIDIA inference-performance page | No L4, A10, BERT or 8B rows | None |
 | TrueFoundry A10 benchmark site | Tables empty | Used the TrueFoundry blog post |
 | CloudPing `/grid/p_50/timeframe/1M` | 404 | Used the homepage default (P50, 1 day). **P90/P99 not captured** |
@@ -227,11 +227,12 @@ All values are $/MTok, standard (non-batch) tier, short context. "Write" means t
 | L2 | Haiku 5.5 cached, `inference_geo: "us"` | $0.000100 | 1.19 | ECO-011 |
 | L2 | Haiku 5.5 uncached / GPT-6 Luna uncached | $0.000290 / $0.000230 | 3.45 / 2.74 | ECO-001, ECO-013 |
 | L2 | Gemini 3.1 / 3.5 Flash-Lite, uncached | $0.00059 / $0.00075 | 7.0 / 8.9 | ECO-021, ECO-022 |
-| L2m | GPT-6.1 Sol cached / Sonnet 5.5 cached | $0.00137 / $0.00160 | 16 / 19 | ECO-014, ECO-004 |
+| L2m | GPT-6.1 Sol cached (no reasoning: lower bound) / Sonnet 5.5 cached | ≥$0.00137 / $0.00160 | ≥16 / 19 | ECO-014, ECO-004 |
 | L2m | Gemini 3.8 Flash, uncached (2026 / 2027 price) | $0.00173 / $0.00345 | 21 / 41 | ECO-023 |
-| L1b | GPT-6 Astra cached / Opus 5.5 cached + 300 thinking tokens / Fable 5.1 cached + 300 thinking tokens | $0.0077 / $0.0092 / $0.0225 | 92 / 110 / 267 | ECO-015, ECO-005, ECO-006 |
+| L1b | GPT-6 Astra cached (no reasoning: lower bound; `none` → 400) / Opus 5.5 cached + 300 thinking tokens / Fable 5.1 cached + 300 thinking tokens | ≥$0.0077 / $0.0092 / $0.0225 | ≥92 / 110 / 267 | ECO-015, ECO-020, ECO-005, ECO-006 |
 | L1 | Fable 5.1, 7 separate calls × 500 reasoning tokens, uncached | $0.22–$0.36 | 2,700–4,250 | ECO-006 |
 | L3 / C1 | Self-hosted 8B on H100, one call (US) / CPU DistilBERT × 7 | ~$0.00010 / ~$0.000001 | 1.2 / 0.012 | ECO-081, ECO-082 |
+| L2d (new) | Hosted decision APIs, 2,000 input tokens, no cache: Clef-flash / Liquid d1 / Microsoft-Decision-1 / OpenAI Decisions / Clef | $0.000076 / $0.000080 / $0.000084 / $0.00020 / $0.00048 | 0.90 / 0.95 / 1.00 / 2.38 / 5.71 | ECO-085 to ECO-088, ECO-091 |
 
 Bill share and P2:
 - **Decision share of the bill:** Jev 2.2%; cached Haiku 2.3%; uncached Haiku 7.1%.
@@ -240,19 +241,27 @@ Bill share and P2:
 - **At 50M msgs/day:** Jev ≈ $4.2K/day vs cached Haiku ≈ $4.6K/day vs generation ≈ $190K/day.
 
 ### Bullets
-1. **The small tier is at price parity with Jev [Likely].** Haiku 5.5 and GPT-6 Luna have identical rate cards ($0.10 / $0.50 / $0.01 cache read) (ECO-001, ECO-013). With a cached rubric and thinking off, a 7-decision call costs 0.92–1.08× Jev. Jev is never more than about 3.5× cheaper than a small tier, and only when the small tier is uncached. Price separates Jev only from mid tiers (16–41×) and frontier tiers (90–270×, or 2,700× or more for the vendor-style L1).
+1. **The small tier is at price parity with Jev [Likely].** Haiku 5.5 and GPT-6 Luna have identical rate cards ($0.10 / $0.50 / $0.01 cache read) (ECO-001, ECO-013). With a cached rubric and thinking off, a 7-decision call costs 0.92–1.08× Jev at 2,000 Jev tokens, or about 1.4–1.6× if Jev's true call is ~1,200 tokens (BoE note). Jev is never more than about 3.5× cheaper than a small tier, and only when the small tier is uncached. Price separates Jev only from mid tiers (16–41×) and frontier tiers (90–270×, or 2,700× or more for the vendor-style L1).
 2. **The small-tier verdict turns on three hidden multipliers [Likely]:**
    - **Haiku thinking.** It is on by default; 200 thinking tokens make the call 2.3× Jev (ECO-010).
    - **Tokenizer.** Officially ~1.3× (ECO-007), but derived up to ~1.6× vs `o200k` (ECO-008). At 1.6× the cached Haiku call is about 1.25× Jev.
    - **Jev price risk.** At 3× its current price, Jev is 2.8× *more* expensive than cached Haiku.
    
    M1 must sweep all three.
-3. **The frontier "no reasoning" rung (L1b) does not exist on Claude [Certain].** Opus 5.5 and Fable 5.1 reject `thinking: disabled` (ECO-010). L1b must carry a thinking-token allowance, or use GPT-6 Astra (effort `none` is not verified for Astra).
+3. **The frontier "no reasoning" rung (L1b) does not exist on Claude or OpenAI [Certain].**
+   - Opus 5.5 and Fable 5.1 reject `thinking: disabled` (ECO-010).
+   - **GPT-6 Astra rejects `none` with HTTP 400** (OpenAI reasoning guide; LLM-027; ECO-020). GPT-6.1 Sol rejects `none` and `minimal`.
+   - L1b on either provider needs a reasoning allowance. Rename it "frontier at lowest effort".
 4. **Caching is not universal [Certain].** The cache minimum is 512 tokens on Claude and 1,024 on OpenAI, but 4,096 on Gemini 3.8 Flash and 3.1 Pro (ECO-025). A ~2K rubric is therefore uncached on Gemini, which makes Gemini Flash-Lite and Flash 7–41× Jev.
 5. **Region dominates the latency budget from India [Likely].**
-   - India → US-West P50 RTT is 211–240 ms (ECO-066, ECO-071). India → US-East is 189–201 ms. India → Singapore is 53–62 ms. Intra-region is 1–2 ms.
-   - **Neither Claude's first-party API, OpenAI, nor Claude on Bedrock offers guaranteed in-India inference** (ECO-011, ECO-012, ECO-019).
-   - So P1-IN's "India-hosted API LLM" may reduce to Vertex in Mumbai (availability unverified) or self-hosting (L3/C1). AWS Mumbai GPUs cost about 20% more (ECO-039 to ECO-042).
+   - India → US-West RTT is **194–240 ms P50**: Azure South India 194, Central India 211, Jio India West 231; AWS ap-south-1 ↔ us-west-2 232–240. These are datacenter-to-datacenter figures with no last mile; tails were not captured (ECO-066, ECO-071).
+   - India → US-East is 189–201 ms. India → Singapore is 53–62 ms. Intra-region is 1–2 ms.
+   - **No current Claude, GPT-6 or Gemini 3.8 model offers guaranteed in-India inference** (ECO-011, ECO-012, ECO-019).
+   - Verified in-India hosted options (ECO-089; LLM-053, LLM-046):
+     - Vertex `asia-south1`: gemini-3.5-flash (deprecated on the Gemini API) and gemini-2.5-flash.
+     - Azure South India Standard: gpt-4.1-mini and gpt-4o.
+     - Azure South India Regional Provisioned: gpt-5.x and gpt-5.4-mini, with a capacity commitment.
+   - **Open-weight decision models** (Clef 27B, Clef-flash 9B; Microsoft-Decision-1's Qwen3.5-9B base) could be self-hosted in Mumbai on one L4/A10G-class GPU for the 9B models (ECO-090). This strengthens the in-region L3 rung for P1-IN. AWS Mumbai GPUs cost about 20% more (ECO-039 to ECO-042).
 6. **Self-hosting compute is cheap; the costs are ops and labels [Guessing].**
    - CPU DistilBERT costs about $1×10⁻⁶ per message (ECO-082), roughly 80× below Jev.
    - An 8B model on H100 costs about $0.0001 per call at full utilization (ECO-081), roughly Jev parity before redundancy.
@@ -271,17 +280,24 @@ Bill share and P2:
     - Gemini 3.8 Flash and its TTS double on 2027-01-01 (ECO-023, ECO-031).
     - Deepgram, ElevenLabs and the GPT-5.6 Sol promos are time-limited.
     - Re-verify before Phase 4.
+11. **"Decision model" is now a priced category, not a single vendor [Certain for prices].**
+    - Hosted decision APIs list at $0.038–$0.24 per MTok input, with output free: Clef-flash 0.90×, Liquid d1 0.95×, Microsoft-Decision-1 1.00×, OpenAI Decisions 2.4×, Clef 5.7× Jev per message (ECO-085 to ECO-088, ECO-091).
+    - Jev's list price is matched or undercut within its own category. The ladder needs an **L2d hosted-decision-API rung** behind the Decision Service port.
+    - Quality differences are R1 and R2 scope.
 
 ## Contradictions with the seed facts or the plan
 
 1. **Sonnet 5.5 cache read.** Seed facts give $0.20. The official price is **$0.10** (0.05×) (ECO-004). Opus 5.5's $0.20 is correct, but it is 0.05×, not the generic 0.1×. Fable 5.1 is 0.025×.
 2. **Tokenizer.** Seed says "~1.0–1.35×". The official statement is "approximately 30% more tokens" than the previous Claude tokenizer (ECO-007). The derived comparison against OpenAI's `o200k` may be about 1.6× (ECO-008).
-3. **Plan §0.3** says Jev is "roughly 1–3.5× lower" than a cached small tier. With verified prices the range is **0.92–3.45×**: Jev is slightly *more* expensive than cached GPT-6 Luna (ECO-013). "Near parity" stands.
+3. **Plan §0.3** says Jev is "roughly 1–3.5× lower" than a cached small tier. With verified prices the range is **0.92–3.45×** at 2,000 Jev tokens: Jev is slightly *more* expensive than cached GPT-6 Luna (ECO-013). At a ~1,200-token Jev call, cached small tiers cost 1.4–1.6× Jev. "Near parity" stands either way.
 4. **Generation cost.** The critic's ~$0.005 (Sonnet partly cached) becomes **~$0.0038** at the verified $0.10 Sonnet cache read. The decision share is 2.2%, still inside the plan's 1–3%.
-5. **L1b "frontier, no reasoning"** (PLAN §2) cannot be built on Claude Opus 5.5 or Fable 5.1 (ECO-010). Sonnet 5.5 (L2m) can only use `between_tools`. Haiku 5.5's "thinking off" is feasible, as the seed says (effort ≤ high).
-6. **P1-IN and critic fix R2** assume an India-hosted API LLM exists. For Claude (first-party and Bedrock) and OpenAI it does not (ECO-011, ECO-012, ECO-019). Vertex Mumbai is unverified.
+5. **L1b "frontier, no reasoning"** (PLAN §2) cannot be built on Claude Opus 5.5 or Fable 5.1 (ECO-010), nor on GPT-6 Astra, which returns HTTP 400 for `none` (ECO-020; LLM-027). Sonnet 5.5 (L2m) can only use `between_tools`, and GPT-6.1 Sol rejects `none` and `minimal`. Haiku 5.5's "thinking off" is feasible, as the seed says (effort ≤ high).
+6. **P1-IN and critic fix R2** assume an India-hosted API LLM exists.
+   - For current Claude (first-party and Bedrock) and OpenAI first-party, it does not (ECO-011, ECO-012, ECO-019).
+   - **Corrected after Critic-1:** verified in-India options exist only for older or deprecated models: Vertex `asia-south1` gemini-3.5-flash and gemini-2.5-flash; Azure South India Standard gpt-4.1-mini and gpt-4o (ECO-089; LLM-053, LLM-046).
+   - Self-hosted open-weight decision models in Mumbai are a further in-region option (ECO-090).
 7. **Fairness checklist "caching wherever supported."** Gemini 3.8 Flash and 3.1 Pro will not cache a ~2K rubric (4,096-token minimum, ECO-025). The critic assumed the cheapest Gemini tier was cache-comparable.
-8. **India → US-West RTT of 200–280 ms** (PLAN §1) is consistent: P50 is 211–240 ms (ECO-066, ECO-071). The 280 ms upper end, and any tail percentiles, are **unverified** (P90/P99 not captured).
+8. **India → US-West RTT of 200–280 ms** (PLAN §1) → **194–240 ms P50** (Azure South India 194; Central India 211; Jio India West 231; AWS ap-south-1 ↔ us-west-2 232–240) (ECO-066, ECO-071). These are datacenter-to-datacenter figures with no last mile. The 280 ms upper end and all tail percentiles are **unverified** (P90/P99 not captured).
 9. **Model lineup.** The brief named "GPT-5.6 Terra" as current. The OpenAI flagship lineup is now GPT-6 Astra / GPT-6.1 Sol / GPT-6 Luna; GPT-5.6 Terra ($2 / $12) is the previous generation (ECO-016). Gemini's current Pro is still **3.1 Pro Preview**, with no stable Pro.
 10. **Confirmed unchanged from seed and critic:**
     - Haiku 5.5 at $0.10 / $0.50 / $0.01, with 5m write 1.25× and 1h write 2×.

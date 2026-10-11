@@ -286,6 +286,7 @@ print("top-2 ratio median:", np.median([M.top2_ratio(list(x["probs"].values())) 
 - **JSON mode invalid outputs.** With a grammar (`supports_json_schema: true`) this should be ~0; if not, the server ignored `response_format` (check the version). mlx-lm has no `response_format`: JSON is prompt-only, and invalid outputs are counted.
 - **Exact scorer runs out of memory.** llama-cpp-python 0.3.36 keeps logits only with `logits_all=True` (LOC-022), which allocates n_ctx × vocab × 4 bytes. Lower `n_ctx` (prompts here are < 600 tokens).
 - **Server vs exact scorer disagree.** Check the same GGUF file is loaded (sha256), the same chat template (`/apply-template` on llama-server), and that both run at temperature 0. Small |Δp| also comes from prompt-cache batch-size effects (LOC-014) and different thread counts.
+- **`llama_context: n_ctx_seq (512) > n_ctx_train (0)` warning.** Printed when the GGUF tokenizer is loaded with `vocab_only=True` for code verification. Harmless: no weights or context are used.
 - **GitHub downloads blocked.** In this container the proxy blocked github.com release pages for llama.cpp; the llama.cpp source vendored in the PyPI `llama-cpp-python` sdist was used instead.
 
 ---

@@ -63,3 +63,10 @@ Condensed from Critic-1's "Top findings". The cited IDs are the authoritative ro
 - No independent thinking-off TTFT for Haiku 5.5.
 - No latency distribution published for any decision API.
 - Jev's per-language accuracy is not established.
+
+## Lead spot-checks (2026-10-11, after Critic-1)
+- **openrouter.ai/rankings/decisions** was re-fetched by the lead and **confirmed**: "Usage data through Oct 10, 2026". Weekly requests: Jev 1.13 at 1.03B (+7%); GPT-6 Luna Decisions 14.5M; Perplexity Decider V1.1 27B 9.66M; Clef Flash 8.79M; Clef 6.08M; Mercury Decide 4.9M; Drex v1.5 4.46M; Microsoft-Decision-1 4.16M; d1 3.87M; Kev 4B 2.07M. R2 had logged a 404 for OpenRouter pages; the lead's fetch succeeded. Caveat: this covers OpenRouter traffic only.
+- **Cloudflare Clef-flash docs** were re-fetched and **confirmed**:
+  - "a fast 9B multimodal decision model", priced at $0.038 per M input tokens, with output not charged;
+  - a 24,576-token context, 1–64 questions per request, and up to 4 images;
+  - the open-weights status is not stated on the docs page itself: it links a Hugging Face licence page. Treat "open weights" as [Likely] until the licence is read.
