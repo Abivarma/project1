@@ -11,7 +11,7 @@ Three statements to keep in front of you:
 2. **Temperature scaling needs labels.** The calibration step fits one parameter T on a labelled calibration split. Jev's pitch is calibrated probabilities *without* labels. That gap is the lesson: a local model gets calibrated probabilities only after you pay for labels; whether Jev's claim holds can only be checked against Jev itself.
 3. **The ($) column for local models is a $-equivalent:** power × time × $/kWh plus amortised hardware, with [Guessing] parameters printed in every run log. It is not comparable to API list prices without utilisation assumptions.
 
-Contents: [Quickstart (Linux CPU, executed)](#quickstart-linux-cpu-what-was-executed-here) · [Mac setup](#mac-setup-apple-silicon) · [Verified-on matrix](#verified-on-matrix) · [Swapping models](#swapping-models) · [How the two modes work](#how-the-two-modes-work) · [Smoke-run results](#smoke-run-results-lab-illustrative) · [Exercises](#exercises) · [Troubleshooting](#troubleshooting) · [Vendor backends (Jev, Claude)](#vendor-backends-jev-claude)
+Contents: [Quickstart (Linux CPU, executed)](#quickstart-linux-cpu-what-was-executed-here) · [Mac setup](#mac-setup-apple-silicon) · [Verified-on matrix](#verified-on-matrix) · [Swapping models](#swapping-models) · [How the two modes work](#how-the-two-modes-work) · [Smoke-run results](#hands-on-lab-smoke-run-results-lab-illustrative) · [Exercises](#exercises) · [Troubleshooting](#troubleshooting) · [Vendor backends (Jev, Claude)](#vendor-backends-jev-claude)
 
 ---
 
@@ -176,9 +176,49 @@ mlx-lm needs care: its server caps `top_logprobs` at about 10, returns an unsort
 
 ---
 
-## Smoke-run results (LAB, illustrative)
+## Hands-on lab: smoke-run results (LAB, illustrative)
 
-<!-- SMOKE_RESULTS -->
+Run `ci-cpu-20261011T062914Z` (files in `lab/results/`): `python -m jevlab run --config configs/ci-cpu.yaml`, 963 s wall time, exit 0, no probe failures. Model: Qwen2.5-0.5B-Instruct Q4_K_M (the same GGUF in all three model backends). Task: `clinc150-banking15+oos`, 16 balanced labels, so chance is 1/16 = 0.0625. N_test = 240, N_calibration = 160. ECE uses 10 equal-mass bins. Every row is tagged `LAB:<backend>:qwen2.5-0.5b-instruct-q4_k_m:Q4_K_M:linux-x86_64-4vcpu-cpu` (C1a: `LAB:c1:tfidf-w12-c25-lr:fp32:linux-cpu-4vcpu`). **These are LAB numbers: illustrative only, not production, not Jev.**
+
+| backend : mode | Accuracy [CI95] | Macro-F1 | ECE raw → scaled (T) | Brier raw → scaled | p50 / p95 / cold (s) | Flip rate | Captured mass | $-equiv per 1k [Guessing] |
+|---|---|---|---|---|---|---|---|---|
+| llama-server : json_schema | 0.533 [0.471, 0.592] | 0.507 | 0.127 → 0.155 (1.61) | 0.686 → 0.692 | 0.344 / 0.468 / 0.551 | 0.175 | — | 0.012 |
+| llama-server : logprob_scoring (letters) | 0.117 [0.079, 0.158] | 0.076 | 0.355 → 0.102 (3.98) | 1.056 → 0.898 | 0.162 / 0.284 / 0.195 | 0.917 | 0.998 | 0.006 |
+| ollama : json_schema | 0.517 [0.454, 0.575] | 0.491 | 0.141 → 0.143 (1.63) | 0.696 → 0.697 | 0.301 / 0.406 / 2.469 | 0.217 | — | 0.011 |
+| ollama : logprob_scoring (letters) | 0.096 [0.058, 0.133] | 0.062 | 0.363 → 0.106 (3.98) | 1.052 → 0.899 | 0.127 / 0.183 / 2.726 | 0.933 | 0.997 | 0.005 |
+| llamacpp-inproc/codes : exact_scoring | 0.113 [0.075, 0.154] | 0.079 | 0.354 → 0.104 (4.17) | 1.054 → 0.899 | 0.087 / 0.128 / 2.896 | 0.933 | 0.997 (full vocab) | 0.003 |
+| llamacpp-inproc/full_sequence : exact_scoring | 0.404 [0.346, 0.467] | 0.336 | 0.208 → 0.158 (2.38) | 0.801 → 0.759 | 0.696 / 0.810 / 1.832 | 0.442 | — | 0.024 |
+| c1 : classifier (TF-IDF + LR, 50 labels/class; LAB-B) | 0.917 [0.879, 0.950] | 0.916 | 0.124 → 0.018 (0.51) | 0.150 → 0.115 | 0.0014 / 0.0022 / 0.0016 | 0.000 | — | 0.00005 |
+
+Cold latency: Ollama was force-unloaded before its probe (`keep_alive: 0`), so its cold number includes the model load. llama-server already had the model in memory, so its cold number is only the first, uncached request. The exact scorer's cold number includes loading the model in-process.
+
+**Agreement check (gate): PASS.** The server's top-20 logprob path (llama-server) was compared with the in-process exact scorer, which reads the full vocabulary, on the same GGUF and the same rendered prompt (n = 240, 0 fallbacks). Argmax matched on **0.958** of items. Mean |Δp| was **0.033**, taking the strictest reading: the maximum over the 16 options for each item, averaged over items. Mean total variation was 0.045. Captured mass was 0.9976 on the server path and 0.9974 in-process. As an extra check, Ollama against the exact scorer gave 0.950 / 0.033, and Ollama against llama-server gave 0.946 / 0.041. The disagreements are near-ties in the flat letter distributions of a 0.5B model. Three small sources explain them:
+- the top-20 truncation floor;
+- llama.cpp's prompt cache, whose logits are not bit-identical across batch sizes (LOC-014);
+- different thread and batch layouts.
+
+It is not a quantization mismatch: the GGUF file is the same everywhere.
+
+What the run teaches (LAB, 0.5B model):
+1. **Letter codes fail at 0.5B.** Logprob scoring with letter codes is near chance (0.10–0.12), and its flip rate is about 0.92: the model picks letters by position, and 109 of 240 llama-server predictions were the same letter. The mechanics are fine, though: captured mass is above 0.99 and the server matches the exact scorer. **Full-sequence scoring of the option names** (0.40) is the more faithful Jev-style emulation for a model this small, and **JSON mode** (0.52–0.53) is better still. A 7B model on a Mac should close much of this gap; that is exercise 1.
+2. **Prompt changes did not rescue letter codes** (40 calibration items, llama-server; these items were not used for any reported number):
+   - the default prompt scored 0.05;
+   - repeating the instruction after the message scored 0.05, with 37/40 answers collapsing to `P` (out_of_scope);
+   - repeating the whole option list after the message scored 0.20, at about 5× the latency.
+3. **Temperature scaling fixes over-confidence, but only with labels and only for real distributions.**
+   - Letter-code ECE fell from 0.36 to 0.10 with T ≈ 4.
+   - C1a was *under*-confident (T = 0.51); its ECE fell from 0.124 to 0.018.
+   - JSON mode did **not** improve: 0.127 became 0.155 on llama-server. Its "distribution" is one sequence probability with the rest spread uniformly, and the NLL-optimal T is not ECE-optimal on 160 items.
+   - All of this used 160 labelled calibration items. That is the lesson about the "calibrated without labels" claim.
+4. **Letter scoring halves the latency.** It emits about 2 tokens against about 8 for JSON, so p50 is about 0.13–0.16 s against 0.30–0.34 s on the servers. The in-process exact scorer is fastest at 0.087 s because it has no HTTP and no generation. Full-sequence scoring costs about 0.7 s, since it teacher-forces 16 options.
+5. **State length dominates latency.** In exercise 5, `state-sweep` on llama-server (letters, 8–10 items per step) gave these p50 values:
+   - 0.17 s with no extra state;
+   - 0.92 s with about +220 tokens;
+   - 3.3 s with about +860 tokens;
+   - 13.5 s with about +1,700 tokens. This last step also includes in-process fallback re-scoring of items whose captured mass fell below 0.9.
+
+   The extra state also distracted the 0.5B model: accuracy fell to 0–0.25 on these small samples.
+6. **The classical baseline wins on this task.** C1a with 50 labels per class beats every zero-shot LLM path here, at about 1 ms and about 0.02 ECE after scaling. On a closed intent set with labels available, that is the bar a Jev-like or LLM-like decider has to clear.
 
 ---
 
@@ -208,7 +248,7 @@ Each exercise says what to change, what to look at, and what you should expect. 
 ### 5. Latency vs state length
 **Do:** `python -m jevlab state-sweep --config configs/ci-cpu.yaml --backend llama-server:logprob_scoring --lengths 0,200,800,2000 --n-items 20` (or your Mac config).
 **Look at:** `p50_s`, `mean_input_tokens` per length.
-**Expect:** the options/system prompt is a shared prefix that the server caches, so with no state the per-item cost is a few dozen tokens. Each extra state token must be prefilled, so latency grows roughly linearly with state length (prompt processing dominates; the answer is one token). On a Mac GPU the slope is much flatter than on CPU. Compare with Jev, which bills state tokens on every request and has a 32k state limit: in both worlds the state length, not the question, drives cost and latency.
+**Expect:** the options/system prompt is a shared prefix that the server caches, so with no state the per-item cost is a few dozen tokens. Each extra state token must be prefilled, so latency grows roughly linearly with state length (prompt processing dominates; the answer is one token). On a Mac GPU the slope should be much flatter than on CPU (expected, not measured here). Compare with Jev, which bills state tokens on every request and has a 32k state limit: in both worlds the state length, not the question, drives cost and latency.
 
 ### 6. Emulate Jev's Choice / Score / Noul confidence (`confidence.md`)
 **Do:** the run log already prints the mean emulated Choice confidence. For more, load `_predictions.jsonl.gz`:
