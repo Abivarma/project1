@@ -1,0 +1,8 @@
+# Local Lab: never commit environments, downloaded datasets or model weights
+lab/.venv/
+lab/data/raw/
+lab/models/
+*.gguf
+*.safetensors
+__pycache__/
+.pytest_cache/
