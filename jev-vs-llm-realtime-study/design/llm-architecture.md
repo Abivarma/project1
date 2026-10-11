@@ -95,22 +95,9 @@ flowchart LR
 ## 3. Design choices shared by every LLM rung
 
 ### 3.1 Batching: one structured-output call with an enum per field
-- **One call carries every pre-generation decision:**
-  - FR1 × 4 (injection, self-harm, abuse, PII)
-  - FR4
-  - `opener_id`
-  - FR2 (77 intents + `oos`)
-  - FR6
-  - FR5 extracted fields (purchase-date bucket, amount bucket, tier)
-  - FR3 (score as the enum `"0"`–`"3"`)
-- **Use `output_config.format`, not forced tool use.**
-  - Opus 5.5, Sonnet 5.5 and Fable 5.1 reject forced `tool_choice` [claude-api reference; not in the ledger].
-  - JSON outputs also avoid the 286–406-token tool-use system prompt (ECO-061).
-- **Schema rules that work on both Claude and OpenAI:**
-  - `additionalProperties: false` and every field required (LLM-041).
-  - Only enums, with no numeric or length constraints; these return 400 on Claude (LLM-024).
-  - At most 1,000 enum values on OpenAI (LLM-041).
-  - Normalize enum casing on parse, because Claude does not guarantee it (LLM-024).
+- **One call carries every pre-generation decision**, in this order: FR1 × 4 (injection, self-harm, abuse, PII); FR4; `opener_id`; FR2 (77 intents + `oos`); FR6; FR5 extracted fields (purchase-date bucket, amount bucket, tier); FR3 (score as the enum `"0"`–`"3"`).
+- **Use `output_config.format`, not forced tool use.** Opus 5.5, Sonnet 5.5 and Fable 5.1 reject forced `tool_choice` [claude-api reference; not in the ledger], and JSON outputs avoid the 286–406-token tool-use system prompt (ECO-061).
+- **Schema rules that work on both Claude and OpenAI:** `additionalProperties: false` and every field required (LLM-041); enums only, since numeric and length constraints return 400 on Claude (LLM-024); ≤ 1,000 enum values on OpenAI (LLM-041); normalize enum casing on parse, because Claude does not guarantee it (LLM-024).
 - **Field order is a latency feature.** The gate fields come first. The orchestrator parses the streamed partial JSON and acts on each field as soon as it closes. The gate is then ready after about 10 output tokens instead of 60. [Verify on each provider that the emitted key order follows the schema order.]
 - **Codes are short and tokenizer-aware** (PLAN §6 LL3), so that on Luna the first token of a value identifies the option, which the logprob confidence needs (§5).
 - **Changing the schema invalidates the prompt cache, and the first use of a new schema adds compile latency** (LLM-024, LLM-041). So pre-warm the cache on deploy (§8).
@@ -169,10 +156,7 @@ flowchart LR
 - **Deadline 250 ms; at most 1 retry, and only if it fits inside the deadline.** With an L2 gate median of 0.4–0.9 s, the retry never fits in practice.
 - **No retry on 429/529.** The `retry-after` wait exceeds the deadline (LLM-029). Instead, fire **one hedge** to the other L2 vendor after the observed p90, which adds about 10% to decision cost [Guessing 5–15%].
 - **Circuit-break per provider** on 429, 529 and timeouts, then apply the fallback chain in §4.5.
-- **What the 250 ms contract means for LLM rungs (§4.5):**
-  - Every LLM rung misses it at the median.
-  - The contract is kept as the shared basis, and the deadline misses are reported as such.
-  - The LLM way's requested deviation, a 0.9 s gate deadline, is stated separately and **not** assumed in the shared numbers.
+- **What the 250 ms contract means for LLM rungs (§4.5):** every LLM rung misses it at the median. The contract stays as the shared basis and the misses are reported. The LLM way's requested deviation, a 0.9 s gate deadline, is stated separately and **not** assumed in the shared numbers.
 
 ## 4. Per-architecture delta tables
 
@@ -186,11 +170,11 @@ flowchart LR
 | **Gate ready (FR1, FR4), median** | ≈ 22.4 s | ≈ 2.9–3.0 s | ≈ 1.0 s | ≈ 0.9 s / 0.5–0.6 s. A 2.6k prompt vs AA's 10k → **[Guessing 0.4–0.9 s]** (LLM-083) | same, plus escalations |
 | Gate ready, p95 placeholder (m × median; M1 replaces it) | 34–56 s | 4.4–7.6 s | 1.5–2.5 s | 0.6–2.3 s | **4.8–5.4 s** when e ≥ 5% and the escalation blocks (L2 + L1b) |
 | All fields (60 tokens), median | 22–31 s (LLM-010) | 4.0–4.1 s | 1.5 s | 1.3 s / 0.8–1.2 s | escalations add 4.0–4.1 s |
-| FR8 per sentence (Call B ≈ TTFT + 10 tokens) | ≥ 22 s | about 3 s | about 1.0 s | **0.4–0.9 s [Guessing]** | as L2 |
+| FR8 per sentence (Call B ≈ TTFT + 10 tokens; a smaller prompt than call A) | ≥ 22 s | about 3 s | about 1.0 s | **0.3–0.9 s [Guessing]** (LLM-007, LLM-011) | as L2 |
 | NFR-1 (p95 ≤ 300 ms) | Fail | Fail | Fail | **Fail.** Flips only if the gate median is ≤ 120–200 ms; no ledger row supports that, so P1 stands for L2 | Fail |
-| NFR-4 (FR8 p95 ≤ 150 ms) | Fail | Fail | Fail | **Fail** (2.7–6× at the median) | Fail |
+| NFR-4 (FR8 p95 ≤ 150 ms) | Fail | Fail | Fail | **Fail** (2–6× at the median) | Fail |
 | NFR-2 chat TTFT with the opener (gate + opener field) | Fail | Fail (≈ 3 s) | ≈ 1.0 s median; fails at p95 | **≈ 0.5–0.9 s median; 0.8–2.3 s p95: marginal** | L2, unless escalation blocks |
-| NFR-2 without the opener: max(gate, Sonnet TTFT 0.88 s + first sentence ≈ 0.15 s) + FR8 | Fail | Fail | ≈ 2 s | ≈ 1.4–1.9 s median: **fails** | Fail |
+| NFR-2 without the opener: max(gate, Sonnet TTFT 0.88 s + first sentence ≈ 0.15 s) + FR8 | Fail | Fail | ≈ 2 s | ≈ 1.3–1.9 s median: **fails** | Fail |
 
 **Read-across:** the generation TTFT (0.48–0.88 s, LLM-007, LLM-008, LLM-011) is common to **every** architecture, J1 included. So NFR-2's p95 ≤ 1.0 s is at risk for all of them. That is a requirements-level finding, not an LLM-only one.
 
@@ -268,12 +252,7 @@ Peak load is 40.5, 405 and 2,025 msg/s for 1M, 10M and 50M messages/day (require
 | Retry policy | ≤ 1 retry, only if it fits the deadline (in practice never on L2). 0 retries on 429/529/5xx; **1 hedge** to the other vendor after the p90. SDK defaults overridden (§3.6) | | | | |
 | Fallback chain | L1b → L2 | → L2 | → L2 → C1 | Luna ⇄ Haiku hedge → C1a in-process for FR2, FR3, FR6 (about 1.5 ms [LAB, illustrative], `lab/results/c1_sweep.csv`) → §4.1 defaults | low confidence → L1b or a human; timeout → the L2 chain |
 
-**LLM-specific triggers that count as "error" under §4.1:**
-- `stop_reason: "refusal"`
-- the OpenAI `refusal` field
-- schema-invalid output
-- `max_tokens` truncation
-- an enum value outside the set
+**LLM-specific triggers that count as "error" under §4.1:** `stop_reason: "refusal"`, the OpenAI `refusal` field, schema-invalid output, `max_tokens` truncation, and an enum value outside the set.
 
 | Decision | Timeout / 429 / 529 / invalid output | Refusal | Low confidence (L2c) |
 |---|---|---|---|
@@ -309,11 +288,7 @@ Peak load is 40.5, 405 and 2,025 msg/s for 1M, 10M and 50M messages/day (require
 - **Thresholds act only on the Decision Service port's calibrated probability** (step 4's map, keyed by backend × pinned version × decision type, neutral §A.5). Never on raw p_max, a verbalized bucket or a vote fraction, and never compared across vendors' native "confidence" fields.
 - Thresholds are set on the **risk–coverage curve** of the calibration split, to meet NFR-7: ≥ 97% accurate at ≥ 70% automation. Escalation rate e = 1 − coverage.
 - **On Luna:** continuous calibrated scores → a smooth risk–coverage curve → the lowest e for a given error budget. RLHF logprobs are miscalibrated before recalibration (GPT-4: ECE 0.007 → 0.074 after RLHF, LLM-071), so labels are mandatory. This is the same "labels are needed" caveat that applies to Jev's thresholds (Critic-1 finding 6).
-- **On Claude:**
-  - Verbalized confidence has weak ranking; older-model AUROCs are 0.5–0.6 (LLM-073).
-  - The flat top of the curve forces a higher e for the same error budget.
-  - Since e × $0.0092 dominates L2c's cost (§4.3), **weak confidence turns directly into dollars and tail latency**.
-  - k = 5 cut ECE by only about 24% in Xiong et al. (LLM-073), at 5× cost, and breaks capacity (§4.4).
+- **On Claude:** verbalized confidence ranks weakly (older-model AUROCs 0.5–0.6, LLM-073), and the flat top of the curve forces a higher e for the same error budget. Since e × $0.0092 dominates L2c's cost (§4.3), **weak confidence turns directly into dollars and tail latency**. k = 5 cut ECE by only about 24% in Xiong et al. (LLM-073), at 5× cost, and breaks capacity (§4.4).
 - **Recommendation:** run L2c's confidence-gated fields (FR2, FR4, FR5) on `gpt-6-luna`, and keep Claude for FR1/FR8 ensemble diversity and for generation.
 - Thresholds are versioned per (model ID, prompt hash, schema hash) and **recalibrated on every change** (NFR-8).
 
@@ -339,23 +314,8 @@ Peak load is 40.5, 405 and 2,025 msg/s for 1M, 10M and 50M messages/day (require
 
 ## 7. Observability (FR9, NFR-12)
 
-- **Per decision call, log:**
-  - provider, exact model ID, `usage.inference_geo`, request ID
-  - prompt / schema / rubric hashes
-  - TTFT, time-to-gate-fields and total latency
-  - `stop_reason` and refusal category
-  - schema-valid flag; whether a hedge fired; which fallback was used
-  - input, cache-read, cache-write, output and thinking tokens; computed $
-  - per-field confidence: p_max and captured mass (Luna), vote fraction or verbalized bucket; escalation flag
-- **Dashboards:**
-  - p50/p95/p99 per call type and region. These fill the p95 gap (LLM-018).
-  - cache hit ratio
-  - 429/529/refusal/invalid rates
-  - headroom against each tier limit
-  - escalation rate e
-  - Luna–Haiku disagreement rate
-  - confidence-histogram drift
-  - $ per 1,000 messages split into decisions, generation, speculation waste and human review (NFR-9)
+- **Per decision call, log:** provider, exact model ID, `usage.inference_geo`, request ID; prompt, schema and rubric hashes; TTFT, time to gate fields and total latency; `stop_reason` and refusal category; schema-valid flag, hedge fired, fallback used; input, cache-read, cache-write, output and thinking tokens, with computed $; per-field raw and port-calibrated confidence (p_max and captured mass on Luna; vote fraction or verbalized bucket on Claude); escalation flag.
+- **Dashboards:** p50/p95/p99 per call type and region (these fill the p95 gap, LLM-018); cache hit ratio; 429/529/refusal/invalid rates; headroom against each tier limit; escalation rate e; Luna–Haiku disagreement rate; confidence-histogram drift; $ per 1,000 messages split into decisions, generation, speculation waste and human review (NFR-9).
 - **Alarms:** cache read = 0; thinking tokens > 0 on L2; any FR8 hold rate above the baseline.
 
 ## 8. Evaluation and rollout
@@ -383,7 +343,7 @@ Peak load is 40.5, 405 and 2,025 msg/s for 1M, 10M and 50M messages/day (require
 | Wins | Evidence | Weak | Evidence |
 |---|---|---|---|
 | **FR7 generation:** the only option on every architecture | JEV-076 | **Decision-path latency.** Gate median 0.4–0.9 s vs Jev medians of 0.10–0.39 s; no p95 on either side | LLM-083; JEV-028, JEV-030, JEV-031; LLM-018 |
-| **Multi-hop eligibility** and indirection in one call (L2m/L1b) | Jev's failure modes JEV-071, JEV-074 | **FR8 per sentence:** 0.4–0.9 s vs a 150 ms budget. Hidden by the opener and pipelining, but not removed | §4.1; voice doc §5 |
+| **Multi-hop eligibility** and indirection in one call (L2m/L1b) | Jev's failure modes JEV-071, JEV-074 | **FR8 per sentence:** 0.3–0.9 s vs a 150 ms budget. Hidden by the opener and pipelining, but not removed | §4.1; voice doc §5 |
 | **Long account history:** 1M context on Haiku 5.5 vs Jev's 32k state | LLM-036, JEV-007 (over 100K input the price rises to $0.50, ECO-002) | **Confidence on Claude:** no logprobs; verbalized scores overconfident; k-sampling k× | LLM-021, LLM-073 |
 | **Multimodal attachments** (damaged-item photos) | Jev is text-only (PLAN §0). Note that L2d peers also take images: OpenAI Decisions, Clef, d1 (LLM-044, JEV-108, JEV-110) | **Cost at mid/frontier tiers:** 16–270× J1 | R3 BoE |
 | **Non-English / code-mixed:** frontier LLMs are the default answer, but **no per-language accuracy is in the ledger for either side** | JEV-013 (Jev "handled but not equally well") | **Capacity:** Haiku Scale is already at 1.37× at 1M/day with 3 requests per message; k-sampling is infeasible | §4.4 |
@@ -412,7 +372,7 @@ Peak load is 40.5, 405 and 2,025 msg/s for 1M, 10M and 50M messages/day (require
 ## 12. Steelman of the Jev way (the strongest honest case)
 
 1. **It wins exactly the latency the LLM way cannot hide.**
-   - Independent Jev medians are 0.10–0.39 s (JEV-028, JEV-030, JEV-031), against a modelled L2 gate of 0.4–0.9 s and L2 FR8 of 0.4–0.9 s.
+   - Independent Jev medians are 0.10–0.39 s (JEV-028, JEV-030, JEV-031), against a modelled L2 gate of 0.4–0.9 s and L2 FR8 of 0.3–0.9 s.
    - The LLM way's best answer, speculation plus an approved opener, *hides* latency and pays for it: speculation waste exceeds the whole small-tier decision bill (§3.4).
    - In voice, the first-audio decision and every FR8 after a barge-in sit on the critical path, and a 100 ms decision there changes the product (voice doc §3).
 2. **Fan-out is nearly free.**
@@ -436,12 +396,7 @@ Peak load is 40.5, 405 and 2,025 msg/s for 1M, 10M and 50M messages/day (require
 7. **Real adoption.** About 1.03B decision requests per week on OpenRouter, about 70× the next decision model (JEV-107). Its operational behaviour is exercised at scale.
 8. **The decision fits the shape of the work.** Most of FR1 to FR8 is System-1: bounded outputs on short state. Running them on a generator and then constraining its output is the long way round. OpenAI itself shipped a Decisions API claiming "about 10× faster than the Responses API" (LLM-044, a vendor claim).
 
-**The limits of this steelman (stated so it stays honest):**
-- Jev serves from the US only, with no SLA and a 4-week track record (JEV-015, JEV-016).
-- It came last on LegalBench and on BANKING77 (JEV-083, JEV-087).
-- JevOut-style context flips (JEV-106).
-- It cannot do FR7 at all.
-- The strongest Jev design is therefore **J2 plus an LLM for FR7**, i.e. a hybrid. This doc's L2 sits behind the same Decision Service port as the fallback.
+**The limits of this steelman (stated so it stays honest):** Jev serves from the US only, with no SLA and a 4-week track record (JEV-015, JEV-016); it came last on LegalBench and on BANKING77 (JEV-083, JEV-087); it is exposed to JevOut-style context flips (JEV-106); and it cannot do FR7 at all. The strongest Jev design is therefore **J2 plus an LLM for FR7**, i.e. a hybrid, with this doc's L2 behind the same Decision Service port as the fallback.
 
 ## 13. Gaps M1 and Phase 3 must close
 

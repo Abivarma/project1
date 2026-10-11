@@ -19,7 +19,7 @@ Scope:
 | Does any path meet NFR-3 (p95 ≤ 800 ms) on ledger numbers? | **Only V-casc with an approved opener chosen by a *fast* decision backend** (C1, or Jev/L3 at the median; A2/A3 own those numbers). V-S2S sits at the budget at the median: about 0.8 s, press-reported (LLM-063). V-casc with L2 (LLM) decisions misses: 0.55–1.25 s median to first audio (§3) |
 | Where does decision speed matter most? | (1) The **first-audio decision**: gate + opener, on NFR-3's critical path. (2) **FR8 on the first generated sentence**, and on the first sentence after a barge-in. (3) **Backchannel vs barge-in** classification, at about 100–200 ms. After the first sentence, FR8 latency is hidden by playback (§5) |
 | What can S2S not do? | Structured outputs are not supported on `gpt-live-1` or `gemini-3.8-live` (LLM-062, LLM-066). So typed decisions run **outside** the S2S model, and a fail-closed per-sentence FR8 is not achievable without giving up S2S's latency advantage (§7) |
-| Cost | V-casc ≈ $0.013–0.060 per call-minute; V-S2S ≈ $0.026–0.068 per minute, plus backend tokens (§8) [Guessing; derived] |
+| Cost | V-casc ≈ $0.013–0.060 per call-minute. V-S2S ≈ $0.026–0.068 per minute on `gemini-3.8-live` / `gpt-live-1`, plus backend tokens; `gpt-realtime-2.1` is up to $0.114 (§8) [Guessing; derived] |
 | **Recommendation (LLM advocate, honest)** | Regulated support flows → **V-casc**: LLM generation, fast decisions on the critical path, and LLM decisions async or for escalation. Low-risk conversational flows → **V-S2S** with side-channel decisions and an async FR8 audit |
 
 ## 1. Components (exact IDs)
@@ -87,13 +87,13 @@ The syntax was checked with `mermaid.parse` (mermaid 11.4.1).
 | Transcript ready | With the Flux EOT event; AssemblyAI final 307 ms (LLM-058) [vendor] | With the eager event | same | same | — |
 | Decision gate (+ `opener_id`) | L2: 0.40–0.90 s (LLM-083) [Guessing] | parallel with generation | **0.40–0.90 s** | C1: ≈ 1.5–5 ms [LAB, illustrative]; Jev 0.10–0.39 s (JEV-028, JEV-030, JEV-031; probe location unstated) | — |
 | Generation TTFT + first sentence | 0.48–0.88 s (LLM-007, LLM-008, LLM-011) + 15 tokens at 87–126 tok/s ≈ 0.12–0.17 s | same, overlapped with the gate | behind the opener | behind the opener | — |
-| FR8 on the first generated sentence | L2: 0.30–0.60 s [Guessing] | 0.30–0.60 s | behind the opener (§5) | behind the opener | Not enforceable (§7) |
+| FR8 on the first generated sentence | L2: 0.3–0.9 s [Guessing] (llm-architecture §4.1) | 0.3–0.9 s | behind the opener (§5) | behind the opener | Not enforceable (§7) |
 | TTS time to first audio | 128–197 ms (LLM-060) | 128–197 ms | pre-synthesized: [Guessing 20–50 ms] | same as P2 | — |
 | Client network / jitter buffer | [Guessing 30–100 ms] | same | same | same | Included |
-| **Total to first audio, median** | **1.7–3.1 s** | **1.2–2.1 s** | **0.55–1.25 s** | C1: **0.15–0.36 s**; Jev: **0.25–0.74 s** | **≈ 0.80 s** (LLM-063, press, [Guessing]) |
+| **Total to first audio, median** | **1.7–3.4 s** | **1.2–2.4 s** | **0.55–1.25 s** | C1: **0.15–0.36 s**; Jev: **0.25–0.74 s** | **≈ 0.80 s** (LLM-063, press, [Guessing]) |
 | p95 placeholder (M1 owns it) | Fail | Fail | m × the gate hop → 0.75–2.6 s: **fail** | C1 passes; Jev depends on its unknown p95 (A2) | ≈ 0.97 s if normal with σ = 104 ms (LLM-064, app-measured): **marginal fail** |
 | NFR-3 verdict | ✗ | ✗ | ✗ at p95; marginal at the median | ✓ (C1); ~ (Jev) | ~ at the median; likely ✗ at p95 |
-| Time to first *generated* (non-opener) audio | — | 1.2–2.1 s | 1.2–2.1 s; hidden if the opener plays ≥ that long | 0.9–1.5 s | — |
+| Time to first *generated* (non-opener) audio | — | 1.2–2.4 s | 1.2–2.4 s; hidden if the opener plays ≥ that long | C1: 0.9–1.6 s; Jev: 1.0–1.9 s | — |
 
 **Notes:**
 - **The binding hop is not the decision; it is generation TTFT** (0.48–0.88 s; LLM-007, LLM-008, LLM-011). It is the same on every cascade, Jev included (requirements §6.4).
@@ -137,7 +137,7 @@ The syntax was checked with `mermaid.parse` (mermaid 11.4.1).
 
 | FR8 backend (ensemble member; FR8 is never single-model) | Median per sentence | NFR-4 (p95 ≤ 150 ms) | Sentence 1 without an opener | With opener + pipelining |
 |---|---|---|---|---|
-| L2 (`gpt-6-luna` / `claude-haiku-5-5`, padded cached prefix) | 0.30–0.60 s [Guessing; from LLM-007, LLM-011 with a small prompt] | ✗ (2–4×) | +0.3–0.6 s audible | Hidden if the opener lasts ≥ about 1.2–2.1 s [Guessing 4–7 words]. Residual risk: tail, barge-in, short sentences |
+| L2 (`gpt-6-luna` / `claude-haiku-5-5`, padded cached prefix) | 0.3–0.9 s [Guessing; from LLM-007, LLM-011 with a small prompt] | ✗ (2–6×) | +0.3–0.9 s audible | Hidden if the opener lasts ≥ about 1.2–2.4 s [Guessing 4–8 words]. Residual risk: tail, barge-in, short sentences |
 | L2m (`claude-sonnet-5-5`) | about 1.0 s (LLM-008) | ✗ | +1 s | Needs an opener of about 2 s |
 | J (`jev-1.13.0`; A2) | 0.10–0.39 s (JEV-028, JEV-030, JEV-031) | ~ (the p95 is unknown) | +0.1–0.4 s | Hidden |
 | C1b in-process (A3) | p95 ≤ 27 ms on 4 vCPU (ECO-055) | ✓ | ≈ 0 | Hidden |
@@ -145,7 +145,7 @@ The syntax was checked with `mermaid.parse` (mermaid 11.4.1).
 
 **Design (FR8 ensemble, fail closed):**
 - A sentence is released only when **all members clear it** (C1b ∥ regex ∥ an LLM or J member).
-- The slowest member sets the release time, so the LLM member's 0.3–0.6 s is hidden by the opener and by pipelining, not removed.
+- The slowest member sets the release time, so the LLM member's 0.3–0.9 s is hidden by the opener and by pipelining, not removed.
 - **If NFR-4 stays a hard p95 SLO, the LLM cannot be a blocking FR8 member.** The honest LLM-way answer is then:
   - the blocking layer is C1b + regex (+ J/L3);
   - the LLM runs as an **async** policy/tone auditor that can interrupt and correct.
@@ -202,7 +202,7 @@ The syntax was checked with `mermaid.parse` (mermaid 11.4.1).
 
 **Notes:**
 - R3's "S2S costs about 5–15× a cascade" (R3 bullet 8) compares S2S audio with ASR + TTS only. **Once the cascade's own LLM generation is included, the ranges overlap** (about 0.4–5×) [Guessing].
-- Decisions are ≤ 3% of the V-casc minute on any small-tier backend [Guessing], so in voice **the decision backend is chosen on latency, not price**.
+- Decisions are ≤ 4% of the V-casc minute on any small-tier backend [Guessing], so in voice **the decision backend is chosen on latency, not price**.
 
 ## 9. Capacity
 
@@ -254,5 +254,5 @@ The syntax was checked with `mermaid.parse` (mermaid 11.4.1).
 ## 13. Gaps
 - No measured S2S latency matching NFR-3's clock. No latency at all for `gemini-3.8-live`.
 - No ledger data on S2S manual response triggers, output-audio holding, or ZDR for `gpt-live-1`.
-- Small-prompt TTFT for LLM FR8 calls (the 0.3–0.6 s figure is [Guessing]).
+- Small-prompt TTFT for LLM FR8 calls (the 0.3–0.9 s figure is [Guessing]).
 - Speech rate and sentence length for the pipelining slack: measure them on the golden audio.
