@@ -1,6 +1,6 @@
 # Plan v2: Jev (TypeSafe AI "System One") vs LLMs for real-time experiences
 
-Status: **v2.1**. v2.1 applies the six v2 re-check edits. It applies the Phase 0 plan-critic review in `reviews/phase-0-plan-critic.md` (verdict PASS-WITH-FIXES). Each fix's disposition is in §9.
+Status: **v2.2**. v2.2 applies the Phase 1 fact-check corrections listed in §10. v2.1 applied the six v2 re-check edits. It applies the Phase 0 plan-critic review in `reviews/phase-0-plan-critic.md` (verdict PASS-WITH-FIXES). Each fix's disposition is in §9.
 
 History:
 - v0 wrongly read "Jev" as JEPA.
@@ -11,7 +11,7 @@ History:
 
 ### What Jev is
 Source: vendor docs at docs.typesafe.ai, read 2026-10-11. Tags are verified in Phase 1.
-- **Identity:** the first "System One model", `jev-1.13.0`. Announced 2026-10-11. Early access with a waitlist.
+- **Identity:** the first "System One model", `jev-1.13.0`. **Launched 2026-09-15** (early access). Also reachable without the waitlist through OpenRouter, Vercel and MotherDuck. TypeSafe raised $870M at a $7.5B valuation on 2026-10-09. On OpenRouter, Jev serves about 1.03B decision requests a week. Sources: JEV rows; dates corrected by Critic-1.
 - **Input:** text only (string / JSON / array).
 - **Output:** typed answers with probabilities and a confidence value:
   - **Choice:** up to 255 options; larger sets go through a vendor two-stage process with "occasional slowdown".
@@ -25,16 +25,25 @@ Source: vendor docs at docs.typesafe.ai, read 2026-10-11. Tags are verified in P
 - **Region:** service "currently based" on the US West Coast [Likely].
 
 ### Uncomfortable truths to carry through the study
-1. **The evidence is vendor self-reported, from launch day.**
-   - "193.6× faster, 444.6× cheaper" is in the vendor's words "the higher end of real-world gains", measured against frontier or reasoning LLMs.
+1. **About four weeks of third-party evidence now exist, and they show quality and calibration depend on the task.** (Corrected after Phase 1; v2 said "vendor-only, launch day".)
+   - Strong on bounded verification: ties frontier models on claim verification.
+   - Weak elsewhere: last of 12 on LegalBench, last of 17 on a 77-case BANKING77 pilot.
+   - Calibration varies by task: ECE about 0.01 to 0.11.
+   - The vendor's headline numbers remain vendor-run.
+   - "193.6× faster, 444.6× cheaper" is in the vendor's words "the higher end of real-world gains", with no named comparator.
    - "238×" is a list-price ratio ($10 Fable 5.1 ÷ $0.042).
    - The homepage example implies about 75× faster and 171× cheaper.
    - "0% hallucination" is true by construction (outputs are restricted to the defined options), not measured.
    - Vendor "accuracy" means agreement with GPT-6 Astra / Fable 5.1, not ground truth.
+   - **"Decision model" is now a product category, not a moat.** Within four weeks of Jev's launch came:
+     - OpenAI Decisions API (2026-10-06; gpt-6-luna; $0.10/MTok input only; images; US/EU residency)
+     - Cloudflare Clef and Clef-flash (open weights; Clef-flash $0.038)
+     - Microsoft-Decision-1 ($0.042)
+     - Liquid d1 ($0.04)
 2. **Jev is not an LLM replacement.** The real question is which parts of a real-time system are System-1-shaped (bounded decisions) and which are System-2-shaped (generation, reasoning, multimodal).
 3. **The headline depends on the comparator** (critic Risk 1).
-   - Against a cached small-tier LLM (Claude Haiku 5.5 at $0.10/$0.50, cache reads about $0.01), Jev's price per decision is roughly 1–3.5× lower, near parity [Guessing; re-derived in M1].
-   - Decisions are an estimated 1–3% of the total bill once generation is included.
+   - Against a cached small-tier LLM (Claude Haiku 5.5 or GPT-6 Luna, both $0.10/$0.50 with $0.01 cache reads), Jev's verified price per message is 0.92–3.45× lower. That is parity, and GPT-6 Luna cached is slightly cheaper than Jev (ECO rows).
+   - Decisions are about 2% of the total bill once generation is included. Against cached Haiku, Jev saves about 0.2% of the bill (R3).
    - Price is therefore a differentiator only against mid and frontier tiers.
    - The candidate differentiators are critical-path latency, native calibrated distributions with no labels needed, API simplicity, and capacity/operational risk.
 4. **Capacity may be the binding constraint** (critic Risk 2). At default limits Jev sustains roughly 50 messages/s (token-bound). The SDK defaults (10 s timeout, automatic retries) would break a real-time SLO unless they are overridden.
@@ -64,7 +73,7 @@ These go into the study's interview script and `requirements.md`:
 ### Defaults when the answers are unknown
 - **Volumes:** a sweep over 1M, 10M and 50M messages/day, where a message is one user turn. 50M/day is about 579 msg/s on average, and the assumed peak is 3.5× that, about 2,000 msg/s.
 - **Regions:** US-West, US-East, EU and India. The user has been asked for their region.
-  - From India, the round trip to a US-West-only service alone is about 200–280 ms [verify in R3].
+  - From India, the datacenter-backbone round trip to US-West is 194–240 ms at P50; tail and last-mile latency are not captured. Jev processes data only in the US (us-west-2).
 - **Parameter card:** a "bring your own workload" card in M1 lets the user plug in their own numbers.
 
 ### Primary scenario P: real-time customer-support assistant (chat and voice)
@@ -102,7 +111,8 @@ Then the system generates a reply (System 2).
 | ID | Family | Decisions | Generation | Rung / note |
 |---|---|---|---|---|
 | L1 | LLM | Frontier model with reasoning, one call per decision | Frontier | **Vendor comparator / anti-pattern**. Used only to reconcile with the vendor's numbers; never a headline |
-| L1b | LLM | Frontier model, no reasoning, batched | Frontier | Rung b |
+| L1b | LLM | Frontier model at its **lowest effort**, batched | Frontier | Rung b. "No reasoning" cannot be built: Opus 5.5, Fable 5.1, GPT-6 Astra and GPT-6.1 Sol reject disabling it (LLM-027) |
+| L2d | Decision API | Hosted decision-model API: OpenAI Decisions (gpt-6-luna), Clef-flash, Microsoft-Decision-1, Liquid d1 | Mid | **New rung after Phase 1.** Jev's direct peers
 | L2m | LLM | Mid-tier, batched structured output | Mid | Rung c |
 | L2 | LLM | Small tier (Haiku 5.5 class and the cheapest OpenAI/Gemini tiers), batched, rubric cached, thinking off | Mid, streamed | Rung d: **the fair API-LLM baseline** |
 | L2c | LLM | L2 with confidence escalation to frontier (confidence = logprobs where the provider has them, otherwise k-sample self-consistency at k× cost) | Mid | Cascade peer to J2 |
@@ -115,7 +125,7 @@ Then the system generates a reply (System 2).
 | V-S2S | LLM | Speech-to-speech real-time model | — | Voice, LLM way |
 | V-casc | Jev | ASR → decisions (Jev/L2/C1) → LLM → TTS | — | Voice, forced for Jev because it is text-only |
 
-**Design idea to evaluate:** a **Decision Service port**, i.e. a typed Choice/Score/Noul interface with swappable backends (Jev, L2, L3, C1). It is the build-vs-buy hedge against a vendor that launched today.
+**Design idea to evaluate:** a **Decision Service port**, i.e. a typed Choice/Score/Noul interface with swappable backends (Jev, L2, L3, C1). It is the build-vs-buy hedge for a four-week-old vendor in a category that is commoditising fast.
 
 ## 3. Pre-registered hypotheses
 Each hypothesis has a falsification rule fixed before Phase 3. No recommendation is pre-committed.
@@ -123,7 +133,7 @@ Each hypothesis has a falsification rule fixed before Phase 3. No recommendation
 | ID | Hypothesis | Falsified if |
 |---|---|---|
 | P1 | From US-West, Jev's decision-path p95 is ≤ 300 ms while the best API-LLM decision path (L2) is > 300 ms. **Modelled, not measured:** Jev publishes no p95, so the model reports the threshold at which the verdict flips | Modelled L2 p95 is ≤ 300 ms, or Jev p95 is > 300 ms, using ledger latency distributions |
-| P1-IN | From India, neither Jev nor a US-hosted API LLM meets a 300 ms decision p95. Only an in-region option does: an India-region-hosted API LLM (e.g. a cloud region in Mumbai), L3 or C1 | Jev p95 from India is ≤ 300 ms, or no in-region option meets it |
+| P1-IN | From India, neither Jev nor a US-hosted API LLM meets a 300 ms decision p95. Only an in-region option does: an India-region API LLM (Vertex asia-south1 gemini-3.5-flash / 2.5-flash; Azure South India gpt-4.1-mini / gpt-4o), a self-hosted open-weight decision model in Mumbai (Clef-flash, or the Qwen base of Microsoft-Decision-1), L3, or C1 | Jev p95 from India is ≤ 300 ms, or no in-region option meets it |
 | P2 | Including generation, J1 cuts the total per-message bill by < 5% compared with L2 (cached small tier) | The modelled saving is ≥ 5% at default parameters |
 | P3 | With N labelled examples per intent, C1a matches the best zero-shot decision model within 2 accuracy points at lower cost and latency. N is swept over {0, 10, 50, 200}. The zero-shot reference is the lab's zero-shot scorer, measured on the same split; vendor or literature Jev numbers are context only | C1a at N=50 is more than 2 points below the lab zero-shot scorer on the held-out test split (bootstrap 95% CI) |
 | P4 | J1 cannot serve 2,000 msg/s peak at default rate limits | Headroom ratio is ≥ 1 |
@@ -139,7 +149,7 @@ Each hypothesis has a falsification rule fixed before Phase 3. No recommendation
   - Latency vs state size.
   - Critical path vs off-path: run the guardrail in parallel with speculative generation.
 - **Tokens and charges:**
-  - State tokens and question tokens kept separate. A Jev request is modelled as fixed overhead (about 300 tokens) + state + about 57 tokens per question. These figures are inferred from the `api.md` usage examples [Guessing; verify in R1].
+  - State tokens and question tokens kept separate. A Jev request is modelled as fixed overhead (about 250–300 tokens) + state + per-question tokens. Per-question tokens are about 57 for short questions (GDPR cookbook) and about 75–95 net for support rubrics. A 77-option Choice is about 1,670 tokens. These are Critic-1 re-derivations.
   - LLM caching modelled; Jev gets no cache discount.
   - Thinking tokens counted.
   - **$ per message (or per 1K characters), never $ per token across vendors.**
@@ -241,3 +251,33 @@ Detailed, checkable gate criteria are in `reviews/phase-0-plan-critic.md` under 
 | C1b measured | **Modified.** C1b (fine-tuned encoder) is estimated from the literature, not trained here, tagged at most [Likely] with its conditions. P3 rests on the measured C1a. Reason: CPU time budget |
 | LL1–LL8 | **Accepted** |
 | v2 re-check R1–R6 | **Accepted** (P1 marked modelled with its flip threshold; India-region LLM added to P1-IN; P3/P5 given concrete rules; L3 lab results illustrative only; Jev token overhead modelled; user-location guess removed) |
+
+## 10. Phase 1 findings that changed the plan (v2.2)
+Source: `reviews/phase-1-factcheck-critic.md`, "Lead-level corrections" and "Top findings".
+
+**Dates and evidence**
+- Jev launched 2026-09-15, not 2026-10-11. The blog's date is a site-deploy stamp.
+- The "launch-day, vendor-only" framing is replaced by "4 weeks of third-party evidence; task-dependent".
+
+**Comparator ladder**
+- New rung **L2d** for hosted decision-model APIs, Jev's direct peers.
+- L1b renamed "frontier at lowest effort", because reasoning cannot be disabled on frontier models.
+
+**Price, capacity and confidence**
+- Small-tier LLMs are at price parity with Jev.
+- Capacity binds on both sides: Jev's default limits, and Haiku 5.5's Scale tier at 10K RPM.
+- Claude has no logprobs [Certain]. LLM confidence on Claude is verbalized or k-sampled.
+
+**Residency**
+- India in-region options are limited to Vertex asia-south1, Azure South India Standard, and self-hosted open-weight models.
+
+**Robustness**
+- JevOut: natural context additions flip 61–73% of correct decisions.
+- Cisco: a fine-tuned 1B encoder beats Jev at strict false-positive rates on safety.
+- Consequence: guardrails must never rest on a single decision model.
+
+**Pattern D1**
+- The vendor's AutoResearch cookbook is *not* distillation (Jev stays in the serving path). D1 is our own pattern and has no vendor precedent.
+
+**Superseded**
+- phase-0-plan-critic Risk 3.2 ("no public calibration metrics") no longer holds.

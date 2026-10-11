@@ -126,3 +126,30 @@ def test_provenance_fields_and_quant_names():
     p = make_lab_provenance("ollama", "qwen2.5:0.5b", "Q4_K_M", "mac m3")
     assert p.startswith("LAB:") and len(p.split(":")) == 5
     assert normalise_quant("Q4_K - Medium") == "Q4_K_M" and normalise_quant("Q8_0") == "Q8_0"
+
+
+def test_lmstudio_responses_endpoint_shape():
+    # Shape from the LM Studio Open Responses blog (ledger LOC-016). UNTESTED against a real LM Studio.
+    seen = {}
+
+    def h(request):
+        seen["url"] = str(request.url)
+        seen.update(json.loads(request.content))
+        return httpx.Response(200, json={"output": [{"type": "message", "content": [{"type": "output_text", "text": "B", "logprobs": [
+            {"token": "B", "logprob": -0.1, "bytes": [66], "top_logprobs": [{"token": "B", "logprob": -0.1}, {"token": "A", "logprob": -2.6}]}]}]}],
+            "usage": {"input_tokens": 80, "output_tokens": 1}})
+
+    be = make("logprob_scoring", h, capabilities={"logprobs_endpoint": "lmstudio_responses"})
+    p = be.predict(TASK, TASK.split("test"))[0]
+    assert seen["url"].endswith("/v1/responses") and seen["include"] == ["message.output_text.logprobs"] and seen["top_logprobs"] == 20
+    assert p.label == "balance" and p.input_tokens == 80 and p.captured_mass == pytest.approx(math.exp(-0.1) + math.exp(-2.6))
+
+
+def test_failing_fallback_is_flagged_not_fatal():
+    class Broken:
+        def score_full_sequence(self, task, item, order):
+            raise RuntimeError("prompt exceeds n_ctx")
+
+    h = lambda r: chat("The", {"content": [{"token": "The", "logprob": -0.2, "top_logprobs": [{"token": "The", "logprob": -0.2}, {"token": "A", "logprob": -2.5}]}]})
+    p = make("logprob_scoring", h, fallback=Broken()).predict(TASK, TASK.split("test"))[0]
+    assert p.label == "pay_bill" and "FLAGGED: fallback failed" in p.raw["method"]

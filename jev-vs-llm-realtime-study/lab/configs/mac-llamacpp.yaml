@@ -1,0 +1,52 @@
+# Apple Silicon + llama.cpp llama-server.  STATUS: UNTESTED ON macOS (the identical code path,
+# llama-server + in-process llama-cpp-python on the same GGUF, ran on Linux CPU in ci-cpu.yaml).
+#
+#   1. brew install llama.cpp                       # docs/install.md; or build from source with Metal
+#   2. hf download bartowski/Qwen2.5-7B-Instruct-GGUF Qwen2.5-7B-Instruct-Q4_K_M.gguf \
+#          --revision 8911e8a47f92bac19d6f5c64a2e2095bd2f7d031 --local-dir models/qwen2.5-7b-instruct-gguf
+#   3. llama-server -m models/qwen2.5-7b-instruct-gguf/Qwen2.5-7B-Instruct-Q4_K_M.gguf \
+#          --host 127.0.0.1 --port 8081 -c 4096 --jinja -ngl 99 -a qwen2.5-7b-instruct-q4_k_m
+#   4. CMAKE_ARGS="-DGGML_METAL=on" .venv/bin/pip install llama-cpp-python==0.3.36   # exact scorer
+#   5. cd lab && .venv/bin/python -m jevlab run --config configs/mac-llamacpp.yaml
+#
+# LOAD ANY MODEL: point -m (step 3) and `gguf:` below at any GGUF. GGUF only (LL6).
+run_name: mac-llamacpp
+hardware: mac-apple-silicon
+strict: false
+
+task: {name: clinc150, n_intents: 15, seed: 7}
+ece_bins: 10
+permutation: {k: 2, n_items: 60, seed: 11}
+cost: {power_w: 40, usd_per_kwh: 0.15, hardware_usd: 2500, amortisation_years: 3, utilisation: 0.5}
+
+backends:
+  - name: llama-server
+    kind: openai_compat
+    server: llama-server
+    base_url: http://127.0.0.1:8081/v1
+    model: qwen2.5-7b-instruct-q4_k_m
+    quant: auto                          # from /props
+    modes: [json_schema, logprob_scoring]
+    capabilities:
+      supports_json_schema: true
+      supports_logprobs: true
+      max_top_logprobs: 20
+      logprob_mode: pre_constraint       # default n_probs; post_sampling_probs=true would change it
+      label_scoring: top_logprobs
+      logprobs_endpoint: chat_completions
+    tokenizer: {server_tokenize: true}   # llama-server POST /tokenize
+    captured_mass_threshold: 0.9
+    fallback: llamacpp-inproc
+    max_tokens: {logprob_scoring: 4, json_schema: 24}
+    disable_thinking: true               # chat_template_kwargs.enable_thinking=false + reasoning_effort none
+
+  - name: llamacpp-inproc
+    kind: exact_scorer
+    gguf: models/qwen2.5-7b-instruct-gguf/Qwen2.5-7B-Instruct-Q4_K_M.gguf
+    scorings: [codes, full_sequence]
+    n_ctx: 2048                          # logits_all=True: n_ctx x vocab x 4 bytes (~1.2 GB for Qwen)
+    n_gpu_layers: -1                     # Metal
+
+agreement:
+  server: "llama-server:logprob_scoring"
+  reference: "llamacpp-inproc/codes:exact_scoring"

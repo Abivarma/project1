@@ -1,0 +1,59 @@
+# Apple Silicon + LM Studio.  STATUS: UNTESTED ON macOS (LM Studio cannot run in the Linux container).
+#
+# LM Studio documents JSON-schema structured output on /v1/chat/completions, but its chat-completions
+# parameter list has no logprobs; logprobs come from /v1/responses with
+# include=["message.output_text.logprobs"] (LM Studio 0.3.39+, ledger LOC-015..017). Hence two entries.
+#
+#   1. Install LM Studio (https://lmstudio.ai), then in a terminal:
+#   2. lms get qwen2.5-7b-instruct         # pick the GGUF Q4_K_M or MLX 4-bit build when prompted
+#   3. lms load qwen2.5-7b-instruct && lms server start      # serves http://localhost:1234
+#   4. hf download Qwen/Qwen2.5-7B-Instruct tokenizer.json --revision a09a35458c702b33eeacc393d103063234e8bc28 \
+#          --local-dir models/qwen2.5-7b-instruct-tokenizer
+#   5. cd lab && .venv/bin/python -m jevlab run --config configs/mac-lmstudio.yaml
+#
+# LOAD ANY MODEL: change `model:` in both entries (use the key shown by `lms ls`).
+run_name: mac-lmstudio
+hardware: mac-apple-silicon
+strict: false
+
+task: {name: clinc150, n_intents: 15, seed: 7}
+ece_bins: 10
+permutation: {k: 2, n_items: 60, seed: 11}
+cost: {power_w: 40, usd_per_kwh: 0.15, hardware_usd: 2500, amortisation_years: 3, utilisation: 0.5}
+
+backends:
+  - name: lmstudio-chat
+    kind: openai_compat
+    server: lmstudio
+    base_url: http://127.0.0.1:1234/v1
+    model: qwen2.5-7b-instruct          # <- the one line to change
+    quant: auto                         # LM Studio REST /api/v0/models/<model> "quantization"
+    modes: [json_schema]
+    capabilities:
+      supports_json_schema: true        # GGUF: llama.cpp grammar; MLX: Outlines (LM Studio docs)
+      supports_logprobs: false          # not in the documented chat-completions parameters
+      label_scoring: none
+      logprobs_endpoint: chat_completions
+    json_logprobs: false
+    max_tokens: {json_schema: 24}
+    disable_thinking: true
+
+  - name: lmstudio-responses
+    kind: openai_compat
+    server: lmstudio
+    base_url: http://127.0.0.1:1234/v1
+    model: qwen2.5-7b-instruct
+    quant: auto
+    modes: [logprob_scoring]
+    capabilities:
+      supports_json_schema: true
+      supports_logprobs: true
+      max_top_logprobs: 20              # UNVERIFIED cap for LM Studio
+      logprob_mode: unknown             # not documented; compare constrained vs unconstrained runs
+      label_scoring: top_logprobs
+      logprobs_endpoint: lmstudio_responses
+    tokenizer: {hf_tokenizer_json: models/qwen2.5-7b-instruct-tokenizer/tokenizer.json}
+    captured_mass_threshold: 0.9
+    fallback: null
+    max_tokens: {logprob_scoring: 4}
+    disable_thinking: true

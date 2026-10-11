@@ -69,7 +69,9 @@ def test_cli_run_on_fake_backend(tmp_path, monkeypatch):
     log = next(out.glob("*.log")).read_text()
     assert "$-equivalent formula" in log and "[Guessing]" in log and "illustrative only" in log
     assert next(out.glob("*_reliability.png")).stat().st_size > 1000
-    for line in next(out.glob("*_predictions.jsonl")).read_text().splitlines():
+    import gzip
+
+    for line in gzip.open(next(out.glob("*_predictions.jsonl.gz")), "rt").read().splitlines():
         assert json.loads(line)["provenance"].startswith("MOCK:")
 
 
@@ -80,3 +82,14 @@ def test_cli_exit_code_and_loud_log_on_probe_failure(tmp_path):
     assert rc == 2
     log = next(out.glob("*.log")).read_text()
     assert "PROBE FAILED" in log and "EMPTY logprobs" in log
+
+
+def test_state_sweep_grows_input_tokens(tmp_path, capsys):
+    with FakeServer() as srv:
+        rc = main(["state-sweep", "--config", str(_config(tmp_path, srv.base_url)), "--backend", "fake-llama-server:logprob_scoring",
+                   "--lengths", "0,400", "--n-items", "5"])
+    assert rc == 0
+    rows = [json.loads(l) for l in capsys.readouterr().out.splitlines() if l.startswith("{")]
+    assert [r["state_words"] for r in rows] == [0, 400]
+    assert rows[1]["mean_input_tokens"] > rows[0]["mean_input_tokens"]
+    assert all(r["provenance"].startswith("MOCK:") for r in rows)

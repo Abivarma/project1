@@ -1,0 +1,50 @@
+# Apple Silicon + mlx-lm server.  STATUS: UNTESTED ON macOS (MLX needs Apple Silicon; not runnable here).
+#
+# What the mlx-lm 0.32.0 server code does (read from the PyPI wheel, ledger LOC-019..022):
+#   - logprobs: bool + top_logprobs: int, validated to at most ~10 (SERVER.md says 1-10)
+#   - top-k list is an unsorted argpartition and token strings are raw BPE pieces ('ĠA'),
+#     and each position's "token" is the first top-k entry, not necessarily the sampled token
+#     -> token_format: bpe_raw, label_position: first, max_tokens 1 for logprob scoring
+#   - no response_format / json_schema -> JSON mode is prompt-only (not grammar-enforced)
+#
+#   1. python3 -m venv .venv && .venv/bin/pip install mlx-lm==0.32.0
+#   2. hf download mlx-community/Qwen2.5-7B-Instruct-4bit --revision c26a38f6a37d0a51b4e9a1eb3026530fa35d9fed \
+#          --local-dir models/qwen2.5-7b-instruct-mlx-4bit           # safetensors only (LL6)
+#   3. mlx_lm.server --model models/qwen2.5-7b-instruct-mlx-4bit --port 8080
+#   4. cd lab && .venv/bin/python -m jevlab run --config configs/mac-mlx.yaml
+#
+# LOAD ANY MODEL: any mlx-community/* repo; download it pinned, point --model and the tokenizer at it.
+run_name: mac-mlx
+hardware: mac-apple-silicon
+strict: false
+
+task: {name: clinc150, n_intents: 15, seed: 7}
+ece_bins: 10
+permutation: {k: 2, n_items: 60, seed: 11}
+cost: {power_w: 40, usd_per_kwh: 0.15, hardware_usd: 2500, amortisation_years: 3, utilisation: 0.5}
+
+backends:
+  - name: mlx-lm
+    kind: openai_compat
+    server: mlx-lm
+    base_url: http://127.0.0.1:8080/v1
+    model: models/qwen2.5-7b-instruct-mlx-4bit     # <- the one line to change (path the server was started with)
+    quant: mlx-4bit
+    backend_version: mlx-lm 0.32.0                 # no version endpoint; keep in sync with pip
+    modes: [json_schema, logprob_scoring]
+    capabilities:
+      supports_json_schema: false       # prompt-only JSON; invalid outputs are counted
+      supports_logprobs: true
+      max_top_logprobs: 10              # with 16 options, expect more items below 0.9 captured mass
+      logprob_mode: pre_constraint      # no constraint is applied at all
+      label_scoring: top_logprobs
+      logprobs_endpoint: chat_completions
+      token_format: bpe_raw
+      label_position: first
+    tokenizer: {hf_tokenizer_json: models/qwen2.5-7b-instruct-mlx-4bit/tokenizer.json}
+    captured_mass_threshold: 0.9
+    fallback: null                      # no in-process MLX scorer here; low-mass items are FLAGGED in the log
+    json_logprobs: false                # per-position token text is unreliable on mlx-lm (see above)
+    max_tokens: {logprob_scoring: 1, json_schema: 24}
+    disable_thinking: true
+    thinking_params: {chat_template_kwargs: {enable_thinking: false}}   # mlx-lm passes these to the template

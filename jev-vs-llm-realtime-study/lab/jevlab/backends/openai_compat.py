@@ -342,8 +342,10 @@ class OpenAICompatBackend:
                 raise RuntimeError(f"{self.name}: logprob_scoring requested but config says logprobs unsupported (label_scoring={self.caps.label_scoring})")
             if self.caps.label_scoring == "full_sequence" and self.fallback is None:
                 raise RuntimeError(f"{self.name}: label_scoring=full_sequence needs a fallback exact scorer")
-        if self.mode == "json_schema" and not self.caps.supports_json_schema:
-            raise RuntimeError(f"{self.name}: json_schema mode requested but supports_json_schema=false")
+        if self.mode == "json_schema":
+            # supports_json_schema=false (e.g. mlx-lm server): JSON is requested by prompt only, not
+            # enforced by a grammar; invalid outputs are counted in invalid_rate. Stated, not silent.
+            info["json_constraint"] = "json_schema (grammar-enforced)" if self.caps.supports_json_schema else "NONE: prompt-only JSON, not enforced"
 
         labels = list(task.labels)
         codes = self._codes(labels) if self.mode == "logprob_scoring" else None
@@ -419,11 +421,14 @@ class OpenAICompatBackend:
             if self.mode == "logprob_scoring" and d.get("fallback_needed"):
                 if self.fallback is not None:
                     t0 = time.perf_counter()
-                    fprobs, finfo = self.fallback.score_full_sequence(task, it, labels_order)
+                    try:
+                        fprobs, finfo = self.fallback.score_full_sequence(task, it, labels_order)
+                        probs = fprobs
+                        label = max(labels_order, key=lambda l: probs[l])
+                        raw.update(method="full_sequence(exact) fallback", fallback_info=finfo)
+                    except Exception as e:  # flagged per item and counted in the run log, never silent
+                        raw.update(method=f"top_logprobs (FLAGGED: fallback failed: {type(e).__name__}: {e})")
                     lat += time.perf_counter() - t0
-                    probs = fprobs
-                    label = max(labels_order, key=lambda l: probs[l])
-                    raw.update(method="full_sequence(exact) fallback", fallback_info=finfo)
                 else:
                     raw["method"] = "top_logprobs (FLAGGED: below threshold, no fallback configured)"
             if probs is not None:

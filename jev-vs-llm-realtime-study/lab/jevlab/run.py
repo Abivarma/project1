@@ -5,7 +5,7 @@ For every configured backend x mode:
   after temperature scaling (T fitted on the calibration split only) -> option-order
   permutation test on a test subset -> rows in results/<run_id>.csv.
 Also: optional agreement check (server top-logprob path vs in-process exact scorer),
-results/<run_id>.log, results/<run_id>_reliability.png, results/<run_id>_predictions.jsonl.
+results/<run_id>.log, results/<run_id>_reliability.png, results/<run_id>_predictions.jsonl.gz.
 
 Two config shapes are accepted:
   LAB-A (multi-backend):  backends: [{name, kind, modes, ...}, ...]
@@ -146,8 +146,8 @@ def _probs_or_uniform(preds: Sequence[Prediction], labels: Sequence[str]) -> tup
     for p in preds:
         if p.probs:
             rows.append(p.probs)
-        else:
-            rows.append({l: 1.0 / k for l in labels})
+        else:  # uniform, tipped by epsilon toward the predicted label so argmax == prediction
+            rows.append({l: 1.0 / k + (1e-6 if l == p.label else 0.0) for l in labels})
             filled += 1
     return M.probs_matrix(rows, labels), filled
 
@@ -351,12 +351,9 @@ def _run(cfg, out_dir, run_id, log_path, limit_test, limit_cal, only, permutatio
             rows.append(RunResult(**common, ece=ece0, ece_bins=n_bins, ece_binning="equal-mass", brier=br0, calibrated=False, temperature=None))
             fit = fit_temperature(cal, probs_cal, labels)  # refuses non-calibration items
             pt = apply_temperature(probs_test, fit.T)
-            y_cal_pred = pt.argmax(axis=1)
-            acc_t = [labels[i] if test_preds[j].label is not None else None for j, i in enumerate(y_cal_pred)]
             ece1, br1 = M.ece(pt, y_idx, n_bins), M.brier(pt, y_idx)
-            # temperature scaling does not change argmax; accuracy/F1 identical by construction
-            rows.append(RunResult(**{**common, "accuracy": M.accuracy(y_test, acc_t), "accuracy_ci95": M.accuracy_ci95(y_test, acc_t), "macro_f1": M.macro_f1(y_test, acc_t, labels)},
-                                  ece=ece1, ece_bins=n_bins, ece_binning="equal-mass", brier=br1, calibrated=True, temperature=fit.T))
+            # temperature scaling never changes the argmax, so accuracy/F1 are identical by construction
+            rows.append(RunResult(**common, ece=ece1, ece_bins=n_bins, ece_binning="equal-mass", brier=br1, calibrated=True, temperature=fit.T))
             _, _, aurc0 = M.risk_coverage(probs_test.max(1), (probs_test.argmax(1) == y_idx).astype(float))
             log.info("T=%.3f fitted on %d calibration items (NLL %.3f -> %.3f)", fit.T, fit.n_fit, fit.nll_before, fit.nll_after)
             log.info("ECE(%d equal-mass bins) %.4f -> %.4f ; Brier %.4f -> %.4f ; AURC %.4f ; acc@50%%coverage %.3f",
@@ -378,7 +375,7 @@ def _run(cfg, out_dir, run_id, log_path, limit_test, limit_cal, only, permutatio
 
     csv_path = out_dir / f"{run_id}.csv"
     write_csv(rows, csv_path)
-    pred_path = out_dir / f"{run_id}_predictions.jsonl"
+    pred_path = out_dir / f"{run_id}_predictions.jsonl.gz"
     write_predictions(all_preds, pred_path)
     png_path = None
     if reliab:
@@ -453,7 +450,9 @@ def write_csv(rows: Sequence[RunResult], path: Path) -> None:
 
 
 def write_predictions(all_preds: dict, path: Path) -> None:
-    with path.open("w", encoding="utf-8") as f:
+    import gzip
+
+    with gzip.open(path, "wt", encoding="utf-8") as f:
         for key, splits in all_preds.items():
             for split in ("calibration", "test"):
                 for p in splits.get(split, []):
@@ -463,6 +462,7 @@ def write_predictions(all_preds: dict, path: Path) -> None:
                         "latency_s": round(p.latency_s, 5), "input_tokens": p.input_tokens, "output_tokens": p.output_tokens,
                         "captured_mass": None if p.captured_mass is None else round(p.captured_mass, 5),
                         "provenance": p.provenance, "method": p.raw.get("method") if isinstance(p.raw, dict) else None,
+                        "usd": getattr(p, "usd", None),
                     }
                     f.write(json.dumps(rec) + "\n")
 
@@ -516,3 +516,39 @@ def plot_reliability(reliab: dict, path: Path, n_bins: int, task_name: str) -> N
         t.set_color(ink2)
     fig.savefig(path, dpi=130, facecolor=surface)
     plt.close(fig)
+
+
+# ---------------------------------------------------------------------------
+# Exercise helper: latency vs state length
+# ---------------------------------------------------------------------------
+def state_sweep(cfg: dict, backend_key: str, lengths: Sequence[int], n_items: int = 20) -> list[dict]:
+    """Prepend ~L words of earlier conversation (train-split utterances) to each test item.
+
+    The options/system prompt stays identical, so prefix caching still covers it; only the
+    per-item state grows, which is what a real support conversation does. Returns one row
+    per length with p50/p95 latency, mean input tokens and accuracy. LAB numbers only.
+    """
+    tcfg = cfg.get("task", {})
+    task = load_task(tcfg.get("name", "clinc150"), n_intents=tcfg.get("n_intents", 15), seed=tcfg.get("seed", 7), per_class=tcfg.get("per_class"))
+    bes = [b for b in build_backends(cfg) if f"{b.name}:{b.mode}" == backend_key]
+    if not bes:
+        raise ValueError(f"no backend {backend_key!r} in config")
+    be = bes[0]
+    be.probe(task)
+    filler_words = " ".join(it.text for it in task.split("train")).split()
+    rows = []
+    for L in lengths:
+        items = []
+        for j, it in enumerate(task.split("test")[:n_items]):
+            # a different slice per item, so the server's prefix cache cannot reuse one item's state for the next
+            start = (j * 997) % max(1, len(filler_words) - L)
+            hist = " ".join(filler_words[start:start + L])
+            items.append(dataclasses.replace(it, text=(f"(earlier in this conversation: {hist})\nLatest message: {it.text}" if L else it.text)))
+        preds = be.predict(task, items)
+        lat = M.latency_percentiles([p.latency_s for p in preds])
+        row = {"state_words": L, "p50_s": round(lat["p50"], 4), "p95_s": round(lat["p95"], 4),
+               "mean_input_tokens": _mean_or_none([p.input_tokens for p in preds]),
+               "accuracy": M.accuracy([it.label for it in items], [p.label for p in preds]), "provenance": preds[0].provenance}
+        rows.append(row)
+        print(json.dumps(row))
+    return rows

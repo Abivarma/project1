@@ -128,9 +128,11 @@ class ExactScorer:
         return self._llm.tokenize(text.encode("utf-8"), add_bos=True, special=True)
 
     # ------------------------------------------------------------ forward
-    def _eval_prompt(self, tokens: list[int]) -> None:
+    def _eval_prompt(self, tokens: list[int], extra: int = 0) -> None:
         """Evaluate with KV-prefix reuse (the system prompt is shared across items)."""
         llm = self._llm
+        if len(tokens) + extra > self.n_ctx:
+            raise RuntimeError(f"{self.name}: prompt of {len(tokens)}+{extra} tokens exceeds n_ctx={self.n_ctx}; raise n_ctx in the config")
         n_cached = llm.n_tokens
         L = 0
         cached = llm.input_ids[:n_cached]
@@ -183,7 +185,7 @@ class ExactScorer:
         self.load()
         prompt = self.render(build_messages(task, item.text, labels_order, "json"), prefill=JSON_PREFILL)
         ptoks = self.tokenize(prompt)
-        self._eval_prompt(ptoks)
+        self._eval_prompt(ptoks, extra=16)  # room for the longest option's tokens
         n_p = len(ptoks)
         base = self._next_logprobs(n_p)
         seq_lp, n_tok, boundary_merges = {}, {}, 0

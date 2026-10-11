@@ -53,7 +53,8 @@ class Prediction:
     input_tokens: int | None
     output_tokens: int | None
     provenance: str  # see module docstring
-    cold: bool = False  # first call after model load / connection open
+    cold: bool = False  # first call after model load / connection open. Preferred source for
+    # RunResult.cold_latency_s is probe()["cold_latency_s"]; this flag is the fallback.
     captured_mass: float | None = None  # prob mass covered by returned top-k logprobs
     usd: float | None = None  # per-decision $ from vendor usage x list price (params documented in config)
     raw: dict = field(default_factory=dict)  # backend-specific debug info (not for tables)

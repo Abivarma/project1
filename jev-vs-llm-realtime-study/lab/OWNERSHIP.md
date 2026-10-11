@@ -30,3 +30,5 @@
 4. The one CSV convention is `RunResult.to_row()`: `accuracy_ci95` becomes `accuracy_ci95_lo` and `accuracy_ci95_hi`. All writers (LAB-A runner, LAB-B c1 sweep) must use it. c1 extra columns (`n_per_class_min`, `n_per_class_max`, `n_train`) may follow as extras.
 5. The runner dispatches `kind: jev | claude | c1` to `jevlab.backends.<kind>.make_backend(entry)`. LAB-A implements this.
 6. The ownership rows above are added.
+7. `jevlab/prompts.py` is owned by LAB-A. It holds the shared prompt builders, so the server adapter and the exact scorer render byte-identical prompts.
+8. Cold-latency source, in order of preference: `probe()["cold_latency_s"]`, then `Prediction.cold`. Backends should report cold latency from `probe()`.

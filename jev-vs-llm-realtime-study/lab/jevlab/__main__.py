@@ -18,6 +18,11 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--out", default=None, help="results directory (default lab/results)")
     p = sub.add_parser("probe", help="run only the capability probes (LL2)")
     p.add_argument("--config", required=True)
+    s_ = sub.add_parser("state-sweep", help="exercise: latency vs state length for one backend:mode")
+    s_.add_argument("--config", required=True)
+    s_.add_argument("--backend", required=True, help="name:mode, e.g. llama-server:logprob_scoring")
+    s_.add_argument("--lengths", default="0,200,800,2000", help="comma list of extra state words")
+    s_.add_argument("--n-items", type=int, default=20)
     t = sub.add_parser("task", help="print the task summary")
     t.add_argument("--name", default="clinc150")
     t.add_argument("--n-intents", type=int, default=15)
@@ -34,6 +39,9 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(task.label_descriptions, indent=1))
         return 0
     cfg = R.load_config(a.config)
+    if a.cmd == "state-sweep":
+        R.state_sweep(cfg, a.backend, [int(x) for x in a.lengths.split(",")], a.n_items)
+        return 0
     if a.cmd == "probe":
         from .data import load_task
 

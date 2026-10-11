@@ -1,0 +1,57 @@
+# Apple Silicon + Ollama.  STATUS: UNTESTED ON macOS (the identical code path ran on Linux CPU
+# with Ollama 0.40.2 in configs/ci-cpu.yaml; see LEARNING.md "Verified-on matrix").
+#
+#   1. Install Ollama (macOS 14+): https://ollama.com/download -> drag Ollama.app to Applications
+#   2. ollama pull qwen2.5:7b-instruct              # ~4.7 GB, Q4_K_M; fits a 16 GB Mac
+#   3. hf download Qwen/Qwen2.5-7B-Instruct tokenizer.json --revision a09a35458c702b33eeacc393d103063234e8bc28 \
+#          --local-dir models/qwen2.5-7b-instruct-tokenizer        # for code verification (LL3)
+#   4. cd lab && .venv/bin/python -m jevlab run --config configs/mac-ollama.yaml
+#
+# LOAD ANY MODEL: change `model:` (and the tokenizer path to that model family's tokenizer.json).
+# Thinking models (qwen3, deepseek-r1, gpt-oss): keep disable_thinking: true; the adapter sends
+# reasoning_effort "none" (Ollama docs) and the probe fails loudly if a <think> block still appears.
+run_name: mac-ollama
+hardware: mac-apple-silicon        # e.g. m3-pro-36gb: it goes into every provenance tag
+strict: false
+
+task: {name: clinc150, n_intents: 15, seed: 7}
+ece_bins: 10
+permutation: {k: 2, n_items: 60, seed: 11}
+# [Guessing] Mac mini/MacBook class: ~30-60 W package power under load, $1,600-3,500 hardware
+cost: {power_w: 40, usd_per_kwh: 0.15, hardware_usd: 2500, amortisation_years: 3, utilisation: 0.5}
+
+backends:
+  - name: ollama
+    kind: openai_compat
+    server: ollama
+    base_url: http://127.0.0.1:11434/v1
+    model: qwen2.5:7b-instruct          # <- the one line to change. e.g. llama3.2:3b, gemma3:4b, qwen3:8b
+    quant: auto                         # read from /api/show
+    modes: [json_schema, logprob_scoring]
+    capabilities:
+      supports_json_schema: true
+      supports_logprobs: true           # Ollama >= 0.12.11
+      max_top_logprobs: 20              # Ollama rejects > 20 (HTTP 400), verified on 0.40.2
+      logprob_mode: pre_constraint      # verified on 0.40.2 (Linux); re-check on your version
+      label_scoring: top_logprobs
+      logprobs_endpoint: chat_completions   # or ollama_native (POST /api/chat, "think": false)
+    tokenizer: {hf_tokenizer_json: models/qwen2.5-7b-instruct-tokenizer/tokenizer.json}
+    captured_mass_threshold: 0.9
+    fallback: null                      # set to llamacpp-inproc after enabling it below
+    max_tokens: {logprob_scoring: 4, json_schema: 24}
+    disable_thinking: true
+    force_cold_start: true              # unload first so cold latency includes the model load
+
+  # Optional agreement reference on the SAME weights: Ollama stores the GGUF as a blob.
+  #   ollama show --modelfile qwen2.5:7b-instruct | grep '^FROM'   -> /Users/<you>/.ollama/models/blobs/sha256-...
+  #   CMAKE_ARGS="-DGGML_METAL=on" .venv/bin/pip install llama-cpp-python==0.3.36
+  # The blob has no .gguf suffix; symlink it: ln -s <blob> models/qwen2.5-7b-ollama.gguf
+  - name: llamacpp-inproc
+    kind: exact_scorer
+    enabled: false
+    gguf: models/qwen2.5-7b-ollama.gguf
+    scorings: [codes, full_sequence]
+    n_ctx: 2048
+    n_gpu_layers: -1                    # Metal
+
+# agreement: {server: "ollama:logprob_scoring", reference: "llamacpp-inproc/codes:exact_scoring"}

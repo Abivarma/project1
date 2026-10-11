@@ -8,3 +8,15 @@ scipy==1.18.1              # C1a: log_softmax, fallback temperature search
 threadpoolctl==3.7.0       # C1a: single-threaded per-item latency
 model2vec==0.9.0           # C1a optional static embedding (minishlab/potion-base-8M, safetensors only)
 safetensors==0.8.0         # model2vec weights loader (no pickle)
+
+# --- LAB-A: data, metrics, calibration, scoring, OpenAI-compatible adapter, exact scorer, runner (pinned 2026-10-11) ---
+numpy==2.5.4               # metrics, calibration (pure numpy)
+PyYAML==6.0.3              # configs (yaml.safe_load only)
+httpx==0.28.1              # plain HTTP to Ollama / LM Studio / llama-server / mlx-lm
+huggingface_hub==2.2.0     # pinned-revision parquet + model downloads (no dataset scripts)
+pyarrow==26.0.0            # read parquet
+matplotlib==3.11.2         # reliability diagrams
+tokenizers==0.23.3         # HF tokenizer.json for code verification (no remote code)
+pytest==9.1.1
+# Exact scorer (optional; compiles llama.cpp, ~10 min on 4 vCPU). macOS: CMAKE_ARGS="-DGGML_METAL=on"
+llama-cpp-python==0.3.36   # pulls jinja2 (chat templates rendered in its sandboxed environment)

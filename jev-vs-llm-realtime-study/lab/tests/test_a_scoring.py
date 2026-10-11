@@ -115,3 +115,15 @@ def test_normalise_ollama_native_and_lmstudio_shapes():
 def test_top1_distribution():
     d = S.top1_distribution("b", 0.7, ["a", "b", "c"])
     assert d == pytest.approx({"a": 0.15, "b": 0.7, "c": 0.15})
+
+
+def test_mlx_lm_shape_raw_bpe_unsorted_first_position():
+    # mlx-lm 0.32.0: top list from argpartition (unsorted), raw BPE pieces, entry token = first of list
+    raw = {"content": [{"id": 1, "token": "ĠB", "logprob": -2.0, "top_logprobs": [
+        {"id": 1, "token": "ĠB", "logprob": -2.0}, {"id": 2, "token": "A", "logprob": -0.1}, {"id": 3, "token": "Ġa", "logprob": -3.0}]}]}
+    content = S.normalise_logprob_content(raw, token_format="bpe_raw")
+    assert content[0]["top_logprobs"][0]["token"] == "A"  # sorted by logprob
+    assert content[0]["top_logprobs"][2]["token"] == " a"  # 'Ġa' -> ' a'
+    r = S.score_from_logprobs(content, CODES, LABELS, threshold=0.0, label_position="first")
+    assert r.position == 0 and r.label == "bill_balance"
+    assert r.captured_mass == pytest.approx(math.exp(-0.1) + math.exp(-3.0) + math.exp(-2.0))
