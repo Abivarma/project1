@@ -1,6 +1,6 @@
 # Requirements: real-time support assistant (assumed example)
 
-Status: DRAFT (lead). Numeric cells marked `⟨ledger⟩` are filled once the Phase 1 evidence ledger passes its gate.
+Status: v1 (lead). Numbers cite rows in the Phase 1 evidence ledger (`research/evidence-ledger.md`).
 
 > **Why this scenario.** The user's actual real-time workload is unknown, so a customer-support assistant stands in for it. It is Jev's *best-case domain*: the vendor's intent-routing pattern uses exactly this example. To balance that, this document also lists the in-scenario work where Jev is a poor fit (§3.3).
 
@@ -63,7 +63,7 @@ FR7 (generation), multi-hop eligibility reasoning, and explaining a decision to 
 |---|---|---|---|
 | NFR-1 | Decision-path latency | Message accepted at our regional API gateway → all *on-path* decisions (FR1, FR2, FR4, FR6) available to the orchestrator | p95 ≤ 300 ms, p99 ≤ 600 ms |
 | NFR-2 | Chat time to first token | Gateway accept → first reply token sent to the client | p95 ≤ 1.0 s |
-| NFR-3 | Voice time to first audio | **User's last speech frame** → first TTS audio byte at the client. Includes the endpointing wait | p95 ≤ 800 ms. Human turn gaps are about 200 ms, so ≤ 800 ms feels responsive ⟨ledger⟩ |
+| NFR-3 | Voice time to first audio | **User's last speech frame** → first TTS audio byte at the client. Includes the endpointing wait | p95 ≤ 800 ms. Human turn gaps are about 200 ms (LLM-068/069), so ≤ 800 ms feels responsive |
 | NFR-4 | Output-guardrail cost per sentence | Sentence complete → sentence released to TTS or the client | p95 ≤ 150 ms |
 | NFR-5 | Availability of the decision service | — | 99.9%. On vendor failure, degrade to a fallback backend; never block the user indefinitely |
 | NFR-6 | Per-call deadline on the real-time path | — | 250 ms per decision call; at most 1 retry, and only if it fits the deadline; hedged requests allowed |
@@ -102,36 +102,67 @@ headroom(arch, limit) = vendor_limit / demand        (must be ≥ 1.5 to absorb 
 | 10M/day | 115.7 | 405 |
 | 50M/day | 578.7 | 2,025 |
 
-### 5.1 Jev token model (to be verified in R1)
+### 5.1 Jev token model (Critic-1 re-derivation)
 ```
-tokens_per_call = overhead (~300) + state + Σ question_tokens   (~57 per short question; much more with long option criteria)
+tokens_per_call = overhead (about 250–300) + state + Σ question_tokens
+question_tokens ≈ 57 (short Noul) … 75–95 net (support rubric Choice); a 77-option Choice ≈ 1,670 (JEV-051)
 ```
 
-### 5.2 Jev at default limits (80 req/s, 100K tokens/s)
-- With 1 call per message and about 2,000 tokens per call, the token limit binds at about 50 msg/s.
-- At 1M/day (peak 40.5 msg/s) the **headroom is about 1.2**, so it is marginal.
-- At 10M/day and 50M/day, J1 is **infeasible** without enterprise limits (falsification test P4).
+### 5.2 Headroom at default or published limits (peak, one batched decision call per message, about 2,000 input tokens)
+| Volume | Peak msg/s | Jev at 80 req/s and 100K tok/s (token-bound, about 50 msg/s) | Haiku 5.5 at Scale tier, 10K RPM (about 167 req/s); cache reads not counted in ITPM | GPT-6 Luna at Grow tier, 30K RPM (500 req/s); cached tokens *do* count in TPM |
+|---|---|---|---|---|
+| 1M/day | 40.5 | **1.2×** (marginal) | 4.1× | 12× |
+| 10M/day | 405 | **0.12×** (infeasible) | 0.41× (infeasible) | 1.2× (marginal) |
+| 50M/day | 2,025 | **0.025×** (infeasible) | 0.08× (infeasible) | 0.25× (infeasible) |
 
-## 6. Per-hop latency budgets (filled in from the ledger and M1's Monte Carlo)
+Sources: JEV-005, JEV-006, LLM-029, LLM-084, R2 capability matrix. Takeaway: **at 10M+/day every hosted option needs negotiated limits.** Only self-hosted options (L3, C1, open-weight decision models) scale under our own control.
 
-### Chat, decision path (NFR-1)
-| Hop | p50 | p95 | Notes |
+### 5.3 Real-time client settings (all hosted backends)
+- Per-call deadline: 250 ms.
+- Retries: at most 1, and only within the deadline.
+- Hedged second request: after p90 latency.
+- Circuit breaker: on 429/529/timeouts, with fallback per §4.1.
+- The Jev SDK defaults (10 s timeout, 2 retries, 30 s budget) **must be overridden** (JEV rows, Critic-1 finding 9).
+
+## 6. Per-hop latency budgets (ledger values; the Monte Carlo in M1 turns these into p95)
+
+> **Gap:** no p95 or p99 has been published for Jev or for any LLM decision path (evidence ledger, "Known gaps"). Every p95 below is *modelled*, and M1 reports the threshold at which each verdict flips.
+
+### 6.1 Network round trip from our regional gateway to the decision backend (P50, datacenter backbone)
+| Gateway region | To a Jev endpoint (us-west-2 only) | To an in-region backend | Source |
 |---|---|---|---|
-| Client → gateway (TLS reused) | — | — | Not counted; the clock starts at the gateway |
-| Gateway → decision backend round trip (region-dependent) | ⟨ledger⟩ | ⟨ledger⟩ | India → US-West ≈ ⟨ledger⟩ |
-| Backend compute (Jev / small LLM / C1) | ⟨ledger⟩ | ⟨ledger⟩ | Jev publishes no p95, so it is modelled |
-| Queueing at peak, plus retry tail | ⟨M1⟩ | ⟨M1⟩ | |
-| **Total** | | **≤ 300** | |
+| US-West | about 1–9 ms | about 1–9 ms | ECO-073 |
+| US-East | 70–71 ms | about 1–2 ms | ECO-069, ECO-072 |
+| EU (Frankfurt / Ireland / NL) | 126–154 ms | about 2 ms | ECO-068, ECO-072 |
+| India (Mumbai / Pune) | **211–240 ms** | about 1–2 ms (only if an in-region option exists; see P1-IN) | ECO-066, ECO-071 |
 
-### Voice (NFR-3), cascaded pipeline
-| Hop | p50 | p95 |
+### 6.2 Decision compute and service time (median; where each figure was measured from)
+| Backend | Median | Conditions | Source |
+|---|---|---|---|
+| Jev (independent tests) | 0.10–0.39 s | Probe location mostly unstated, so the figure likely *includes* some network round trip. Barely changes from 1 to 64 questions | JEV-028, JEV-030, JEV-031 |
+| Small LLM, thinking off (proxy) | TTFT 0.48–0.83 s, **plus** about 20–60 output tokens at 87–126 tok/s, which adds roughly 0.2–0.7 s | Artificial Analysis at 10k input from us-central1. Our approx. 2k input would have a lower TTFT. Haiku 5.5 thinking-off has not been benchmarked | LLM-006, LLM-007, LLM-011, LLM-015 |
+| Small LLM, thinking left at its default | **9.7–13.4 s** to the first answer token | Haiku 5.5 at low and medium effort | LLM-003, LLM-004 |
+| Hosted decision API (OpenAI Decisions) | 0.31 s | Same harness as Jev's 0.39 s on BANKING77 | Critic-1 V-table, JEV-087 |
+| C1a classifier, in-process | about 1.5 ms (TF-IDF) / 0.25 ms (model2vec) | Measured here on CPU [LAB, illustrative] | lab/results/c1_sweep.csv |
+
+### 6.3 Chat decision path (NFR-1: p95 ≤ 300 ms from gateway accept)
+| Path | Rough median | Verdict before Monte Carlo |
 |---|---|---|
-| Endpointing / voice-activity-detection hang time | ⟨ledger⟩ | ⟨ledger⟩ |
-| Final speech-to-text transcript | ⟨ledger⟩ | ⟨ledger⟩ |
-| On-path decisions (parallel) | from the chat path | |
-| LLM time to first token | ⟨ledger⟩ | ⟨ledger⟩ |
-| First-sentence output guardrail | ⟨ledger⟩ | |
-| TTS time to first audio | ⟨ledger⟩ | ⟨ledger⟩ |
-| **Total** | | **≤ 800** |
+| Jev, gateway in US-West | 0.10–0.39 s | **Borderline.** Fits at the low end of the medians; p95 is unknown |
+| Jev, gateway in India | 0.21–0.24 s round trip + 0.10–0.39 s | **Fails** (P1-IN) |
+| Small LLM API, thinking off | ≥ 0.5–1.2 s | **Fails** at p95 |
+| C1a / L3 in-region | ≤ 0.05 s | **Passes** |
 
-The speech-to-speech alternative (V-S2S) replaces the middle hops with a single model's time to first audio ⟨ledger⟩.
+### 6.4 Voice (NFR-3: p95 ≤ 800 ms from the user's last speech frame)
+| Hop | Typical | Source |
+|---|---|---|
+| End-of-turn detection | about 260 ms (Deepgram Flux); 128–512 ms minimum silence (AssemblyAI) | LLM-056, LLM-057 [vendor] |
+| Final transcript | about 307 ms median | LLM-058 [vendor] |
+| On-path decisions | Run in parallel with LLM generation, so off the critical path *if* generation is speculative | §2 FR1 |
+| LLM time to first token (small tier, thinking off) | 0.48–0.83 s at 10k input | LLM-007, LLM-011 |
+| First-sentence output guardrail (FR8) | Jev about 0.10 s in-region vs small LLM ≥ 0.5 s | as in 6.2 |
+| TTS time to first audio | 128–197 ms median, measured | LLM-060 |
+| **Cascaded total** | about 0.26 + 0.5–0.8 + 0.1 + 0.13–0.2 ≈ **1.0–1.4 s median** | **Over budget.** Needs eager end-of-turn detection and speculative generation |
+| **Speech-to-speech model (V-S2S)** | about 0.8 s turn-taking (GPT-Live-1, press-reported) | LLM-063, LLM-064 |
+
+**Takeaway for the interview:** in voice, *decisions are not the bottleneck*; endpointing and LLM time to first token are. Jev's speed matters most for the **per-sentence output guardrail** (FR8, a 150 ms budget) and for **many decisions on one state** (fan-out). Humans leave a gap of about 200 ms between turns (LLM-068 [downgraded: excerpt-sourced], LLM-069).
