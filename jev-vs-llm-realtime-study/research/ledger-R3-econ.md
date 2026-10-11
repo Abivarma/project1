@@ -306,3 +306,19 @@ Bill share and P2:
     - Cache hits not counted against rate limits.
     - Fable 5.1 at $10 / $50 / $0.25.
     - Opus 5.5 at $4 / $20 / $0.20.
+
+## Corrections log (Critic-1)
+
+Source: `reviews/phase-1-factcheck-critic.md` (verdict PASS-WITH-FIXES), applied on 2026-10-11 at the lead's request. R3 re-fetched every new URL cited below; no URL was copied unfetched.
+
+| # | Critic item | Change applied | Rows / sections |
+|---|---|---|---|
+| C1 | VENDOR convention mismatch (48 rows VENDOR=Y at [Certain]) | Conventions rewritten: VENDOR=Y only for a vendor's own performance or marketing claims; list prices and documented specs are VENDOR=N. Flipped Y → N on the critic's 48 rows (ECO-001–007, 009–037, 039–048, 050, 061). For consistency, also flipped 4 more price or spec rows (ECO-008, 038, 049, 080), keeping their confidence. **0 rows remain at VENDOR=Y [Certain].** VENDOR=Y now marks only ECO-051, 053, 054, 057 (performance), 063, 064 (adoption claims) and 066–070, 074 (Azure's own network figures), all ≤ [Likely] | Method → Conventions; ledger |
+| C2 | `vendor-marketing` rows above [Guessing] | ECO-051, ECO-053 and ECO-054: [Likely] → **[Guessing]**; type stays `vendor-marketing` | ECO-051, 053, 054 |
+| C3 | GPT-6 Astra `none` (CONTRADICTED) | "Not verified" → **Astra rejects `none` with HTTP 400** (OpenAI reasoning guide, re-fetched; LLM-027). Also recorded that **GPT-6.1 Sol rejects `none` and `minimal`** (same guide). OpenAI and Gemini mid and frontier BoE rows are now marked as lower bounds | ECO-014, ECO-020; BoE; bullet 3; contradiction 5 |
+| C4 | India → US-West RTT | Added South India → West US 2 **194 ms**. Range changed to **194–240 ms P50, datacenter backbone; tail and last mile not captured** | ECO-066, ECO-071; bullet 5; contradiction 8 |
+| C5 | India in-region inference (R3 out of date) | Replaced "unverified" and "does not exist for OpenAI" with verified facts: Vertex `asia-south1` covers gemini-3.5-flash (deprecated on the Gemini API), gemini-2.5-flash and text-embedding-005; Azure South India Standard covers gpt-4.1-mini and gpt-4o (LLM-053, LLM-046; both pages re-fetched and parsed). R3's re-fetch also found Azure South India Regional Provisioned Managed covering gpt-5.x and gpt-5.4-mini (commitment required). Added the open-weight decision-model self-host note (Clef, Clef-flash, Microsoft-Decision-1's Qwen base) | ECO-012, ECO-019; new ECO-089, ECO-090; bullet 5; contradiction 6; Method table |
+| C6 | Decision-API rung missing from R3 prices and BoE | New price rows: OpenAI Decisions $0.10 input only (ECO-085), Clef $0.24 and Clef-flash $0.038 (ECO-086), Microsoft-Decision-1 $0.042 (ECO-087), Liquid d1 $0.04 (ECO-088). Added a price-sheet block, a BoE row (L2d) and ECO-091: 0.90× / 0.95× / 1.00× / 2.38× / 5.71× Jev at 2,000 tokens. Added bullet 11 | Price sheet; ECO-085 to ECO-088, ECO-091; BoE; bullet 11 |
+| C7 | BoE note on Jev token count | Added: Jev's 2,000 tokens include ~250–300 fixed overhead (JEV-050). A 7-question support call is ~1,100–1,250 tokens, so 2,000 is conservative. Sensitivity at 1,200 tokens: cached Haiku 1.6× Jev, cached Luna 1.4× | BoE assumptions; bullet 1; contradiction 3 |
+
+**Not changed:** the critic's other R3 checks were CONFIRMED (Haiku 5.5, GPT-6 Luna, Sonnet 5.5 cache read, Gemini 3.5 Flash-Lite prices, the tokenizer statement and the Haiku thinking rules). The PLAN-level corrections (Jev launch date, the L2d rung, renaming L1b) belong to the lead and were not edited here.
