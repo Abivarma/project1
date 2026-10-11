@@ -125,19 +125,19 @@ Headline numbers on the P3 reference split (`clinc150-banking15+oos`, 16 labels)
 
 | Features | N per class | Accuracy (CI95) | Macro-F1 | ECE raw → after T | p50 / p95 latency | Train time |
 |---|---|---|---|---|---|---|
-| TF-IDF word 1–2 + char 2–5 | 10 | 0.846 (0.800–0.892) | 0.847 | 0.275 → 0.053 | 1.5 / 2.7 ms | 0.8 s |
-| TF-IDF | 50 | 0.908 (0.867–0.946) | 0.907 | 0.122 → 0.022 | 1.5 / 2.9 ms | 2.3 s |
-| TF-IDF | 200 (in-scope capped at 100) | 0.938 (0.904–0.967) | 0.938 | 0.091 → 0.023 | 1.5 / 2.2 ms | 3.6 s |
-| model2vec potion-base-8M | 50 | 0.925 (0.888–0.958) | 0.925 | 0.116 → 0.030 | 0.24 / 0.46 ms | 0.6 s |
+| TF-IDF word 1–2 + char 2–5 | 10 | 0.846 (0.800–0.892) | 0.847 | 0.275 → 0.053 | 1.45 / 1.97 ms | 3.2 s |
+| TF-IDF | 50 | 0.908 (0.867–0.946) | 0.907 | 0.122 → 0.022 | 1.47 / 2.84 ms | 5.1 s |
+| TF-IDF | 200 (in-scope capped at 100) | 0.938 (0.904–0.967) | 0.938 | 0.091 → 0.023 | 1.69 / 2.66 ms | 7.4 s |
+| model2vec potion-base-8M | 50 | 0.925 (0.887–0.958) | 0.925 | 0.116 → 0.030 | 0.25 / 0.56 ms | 2.6 s |
 
-ECE uses 10 equal-mass bins. The raw logistic regression is **under**-confident (T ≈ 0.4–0.6 sharpens it). Temperature scaling needs the labelled calibration split, which is exactly the lesson from Jev's "calibrated without labels" pitch. P3 compares the N = 50 row with the lab zero-shot scorer (LAB-A) on the same split.
+ECE uses 10 equal-mass bins. Latency and training times are noisy, because the container's 4 vCPUs were shared with LAB-A's model runs; rerun the sweep on an idle machine before quoting them. The raw logistic regression is **under**-confident (T ≈ 0.4–0.6 sharpens it). Temperature scaling needs the labelled calibration split, which is exactly the lesson from Jev's "calibrated without labels" pitch. P3 compares the N = 50 row with the lab zero-shot scorer (LAB-A) on the same split.
 
 ### Exercises (vendor and baseline)
 
 1. **Fan-out token accounting (P6).** Call `JevBackend.fanout_token_demo(task, item, extra_questions)` against the stub. You should observe that k questions in one request pay the state and the fixed overhead once, while k separate requests pay them k times. The stub's token model is MOCK; redo it live if you have a key.
 2. **Self-consistency cost versus resolution.** Run the Claude backend in the stub with `k` ∈ {3, 5, 9}. You should observe that tokens and $ scale k×, while the probability grid is only 1/k. ECE needs real data, so do this live.
 3. **Real-time deadline.** Run `curl -XPOST localhost:8765/__stub/config -d '{"delay_ms": 400}'`, then predict with `timeout_s: 0.25`. You should observe `label=None` and `raw.error == "timeout"` in about 0.25 s. With the SDK defaults, the same call would wait.
-4. **Label-count sweep (P3).** Edit `c1.sweep.n_per_class`, for example `[5, 10, 20, 50, 100]`. You should observe that accuracy climbs fast from N = 5 to 50 and then flattens, and that ECE before temperature scaling falls as N grows.
+4. **Label-count sweep (P3).** Edit `sweep.n_per_class` in the `kind: c1` entry of `configs/c1.yaml`, for example `[5, 10, 20, 50, 100]`. You should observe that accuracy climbs fast from N = 5 to 50 and then flattens, and that ECE before temperature scaling falls as N grows.
 
 ### Troubleshooting
 

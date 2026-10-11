@@ -366,6 +366,9 @@ def run_sweep(sweep_cfg: Mapping[str, Any], out_csv: Path, out_log: Path) -> lis
     say(f"# python {platform.python_version()}  scikit-learn {sklearn.__version__}  numpy {np.__version__}  "
         f"platform {platform.platform()}  cpus {__import__('os').cpu_count()}")
     say("# Provenance LAB = measured in this container on public data; NOT a production number.")
+    la = __import__("os").getloadavg()
+    say(f"# load average at start: {la[0]:.2f} {la[1]:.2f} {la[2]:.2f} (4 vCPUs; values > 1 mean other lab jobs shared the CPU, "
+        "so latency/training times are pessimistic and noisy; accuracy/ECE are deterministic)")
     say("# Latency: batch size 1, warm, single-threaded BLAS. usd_per_1k = mean_latency_s*1000/3600*usd_per_vcpu_hour "
         f"(usd_per_vcpu_hour={base.get('usd_per_vcpu_hour', C1Config.usd_per_vcpu_hour)} [Guessing; range 0.02-0.10]).")
     say("# permutation_flip_rate=0.0 is structural (a classifier has no option order), not measured.")
