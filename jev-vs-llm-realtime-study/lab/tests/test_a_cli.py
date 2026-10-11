@@ -55,7 +55,11 @@ def test_cli_run_on_fake_backend(tmp_path, monkeypatch):
     csvs = list(out.glob("*.csv"))
     assert len(csvs) == 1
     rows = list(csv.DictReader(csvs[0].open()))
-    assert [f.name for f in dataclasses.fields(RunResult)] == list(rows[0].keys())
+    expected = []
+    for f in dataclasses.fields(RunResult):
+        expected += [f"{f.name}_lo", f"{f.name}_hi"] if f.name == "accuracy_ci95" else [f.name]
+    assert expected == list(rows[0].keys())  # RunResult.to_row() convention
+    assert all(float(r["accuracy_ci95_lo"]) <= float(r["accuracy"]) <= float(r["accuracy_ci95_hi"]) for r in rows)
     assert {(r["mode"], r["calibrated"]) for r in rows} == {("json_schema", "False"), ("json_schema", "True"), ("logprob_scoring", "False"), ("logprob_scoring", "True")}
     assert all(r["provenance"].startswith("MOCK:") for r in rows)
     assert all(r["n_test"] == "24" and r["ece_binning"] == "equal-mass" for r in rows)

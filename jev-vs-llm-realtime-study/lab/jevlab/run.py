@@ -123,8 +123,12 @@ def build_backends(cfg: dict) -> list[Any]:
             for s in b.get("scorings", ["codes"]):
                 built.append(exact_from(b, s))
         elif kind in ("c1", "jev", "claude"):
+            # Contract change 5: make_backend(entry); it ignores name/kind/modes/quant.
             mod = importlib.import_module(f".backends.{kind}", __package__)
-            built.append(mod.make_backend(b.get("section", {})))
+            entry = {k: v for k, v in b.items() if k not in ("enabled", "section")}
+            if "section" in b:  # legacy single-backend shape: backend: <kind> + <kind>: {...}
+                entry = {**b["section"], **{k: entry[k] for k in ("name", "kind", "modes") if k in entry}}
+            built.append(mod.make_backend(entry))
         else:
             raise ValueError(f"unknown backend kind {kind!r}")
     return built
@@ -149,9 +153,12 @@ def _probs_or_uniform(preds: Sequence[Prediction], labels: Sequence[str]) -> tup
 
 
 def _usd_per_1k(preds: Sequence[Prediction], cost: dict) -> tuple[float | None, str]:
-    usd = [p.raw.get("usd") for p in preds if isinstance(p.raw, dict)]
+    usd = [getattr(p, "usd", None) for p in preds]
+    if usd and all(u is not None for u in usd):  # contract change 3
+        return 1000 * float(np.mean(usd)), "1000 x mean(Prediction.usd): vendor usage x list price (params in the backend config)"
+    usd = [p.raw.get("usd") if isinstance(p.raw, dict) else None for p in preds]
     if usd and all(u is not None for u in usd):
-        return 1000 * float(np.mean(usd)), "vendor list price from backend (raw.usd)"
+        return 1000 * float(np.mean(usd)), "1000 x mean(raw.usd)"
     if not preds or not preds[0].provenance.startswith("LAB:"):
         return None, "n/a"
     lat = float(np.mean([p.latency_s for p in preds]))
@@ -159,6 +166,17 @@ def _usd_per_1k(preds: Sequence[Prediction], cost: dict) -> tuple[float | None, 
     energy = c["power_w"] / 1000 / 3600 * c["usd_per_kwh"]  # $/s
     hw = c["hardware_usd"] / (c["amortisation_years"] * 365 * 24 * 3600 * c["utilisation"])  # $/s
     return 1000 * lat * (energy + hw), "local $-equivalent formula"
+
+
+def _cold_latency(info: dict, preds: Sequence[Prediction]) -> float | None:
+    """Probe's first call if the backend reports it, else a prediction flagged cold."""
+    if info.get("cold_latency_s") is not None:
+        return float(info["cold_latency_s"])
+    for p in preds:
+        if isinstance(p.raw, dict) and p.raw.get("cold_latency_s") is not None:
+            return float(p.raw["cold_latency_s"])
+    cold = [p.latency_s for p in preds if p.cold]
+    return float(cold[0]) if cold else None
 
 
 def _mean_or_none(xs: Sequence[float | None]) -> float | None:
@@ -251,9 +269,14 @@ def _run(cfg, out_dir, run_id, log_path, limit_test, limit_cal, only, permutatio
         key = f"{be.name}:{be.mode}"
         log.info("=" * 70)
         log.info("backend %s", key)
+        train_time_s, n_per_class = None, None
         try:
-            if hasattr(be, "fit") and be.mode == "classifier":
-                be.fit(task, getattr(getattr(be, "cfg", None), "n_per_class", None))
+            if hasattr(be, "fit"):  # contract change 2: optional fit(task) before probe()
+                t_fit = time.perf_counter()
+                fit_info = be.fit(task) or {}
+                train_time_s = float(fit_info.get("train_time_s", time.perf_counter() - t_fit))
+                n_per_class = fit_info.get("n_per_class", fit_info.get("n_per_class_requested"))
+                log.info("fit: %s", json.dumps(fit_info, default=str))
             info = be.probe(task)
             log.info("probe OK: %s", json.dumps(info, default=str)[:2000])
         except Exception as e:  # LL2: loud, recorded, never silent
@@ -308,13 +331,15 @@ def _run(cfg, out_dir, run_id, log_path, limit_test, limit_cal, only, permutatio
             accuracy=M.accuracy(y_test, y_pred), accuracy_ci95=M.accuracy_ci95(y_test, y_pred),
             macro_f1=M.macro_f1(y_test, y_pred, labels),
             p50_latency_s=lat["p50"], p95_latency_s=lat["p95"],
-            cold_latency_s=info.get("cold_latency_s"),
+            cold_latency_s=_cold_latency(info, test_preds + cal_preds),
             mean_input_tokens=_mean_or_none([p.input_tokens for p in test_preds]),
             mean_output_tokens=_mean_or_none([p.output_tokens for p in test_preds]),
             usd_per_1k_decisions=usd,
             mean_captured_mass=_mean_or_none([p.captured_mass for p in test_preds]),
             permutation_flip_rate=flip,
             invalid_rate=float(np.mean([p.label is None for p in test_preds])),
+            n_per_class=n_per_class,
+            train_time_s=train_time_s,
         )
         log.info("usd_per_1k_decisions=%s (%s)", usd, usd_how)
         if probs_test is None:
@@ -408,24 +433,23 @@ def agreement_check(acfg: dict, all_preds: dict, labels: Sequence[str]) -> dict 
 # ---------------------------------------------------------------------------
 # Writers
 # ---------------------------------------------------------------------------
-CSV_FIELDS = [f.name for f in dataclasses.fields(RunResult)]
-
-
 def _fmt(v: Any) -> Any:
-    if isinstance(v, tuple):
-        return json.dumps([round(float(x), 4) for x in v])
     if isinstance(v, float):
         return f"{v:.6g}"
     return "" if v is None else v
 
 
 def write_csv(rows: Sequence[RunResult], path: Path) -> None:
+    """Contract change 4: the one CSV convention is RunResult.to_row()."""
+    if not rows:
+        path.write_text("")
+        return
+    fields = list(rows[0].to_row().keys())
     with path.open("w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=CSV_FIELDS)
+        w = csv.DictWriter(f, fieldnames=fields)
         w.writeheader()
         for r in rows:
-            d = dataclasses.asdict(r)
-            w.writerow({k: _fmt(d[k]) for k in CSV_FIELDS})
+            w.writerow({k: _fmt(v) for k, v in r.to_row().items()})
 
 
 def write_predictions(all_preds: dict, path: Path) -> None:

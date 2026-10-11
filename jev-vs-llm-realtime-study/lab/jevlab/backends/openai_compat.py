@@ -66,6 +66,8 @@ class Capabilities:
     logprob_mode: str = "pre_constraint"  # pre_constraint | post_constraint | unknown
     label_scoring: str = "top_logprobs"  # top_logprobs | full_sequence | none
     logprobs_endpoint: str = "chat_completions"  # chat_completions | ollama_native | lmstudio_responses
+    token_format: str = "text"  # text | bpe_raw (mlx-lm returns raw BPE pieces such as 'ĠA')
+    label_position: str = "search"  # search | first (mlx-lm: per-position "token" is not the sampled token)
 
     @classmethod
     def from_dict(cls, d: dict | None) -> "Capabilities":
@@ -78,6 +80,8 @@ class Capabilities:
             raise ValueError(f"label_scoring must be top_logprobs|full_sequence|none, got {c.label_scoring}")
         if c.logprobs_endpoint not in ("chat_completions", "ollama_native", "lmstudio_responses"):
             raise ValueError(f"bad logprobs_endpoint {c.logprobs_endpoint}")
+        if c.token_format not in ("text", "bpe_raw") or c.label_position not in ("search", "first"):
+            raise ValueError("token_format must be text|bpe_raw and label_position search|first")
         return c
 
 
@@ -244,7 +248,7 @@ class OpenAICompatBackend:
         u = d.get("usage") or {}
         return ChatResult(
             content=(ch.get("message") or {}).get("content") or "",
-            logprobs=scoring.normalise_logprob_content(ch.get("logprobs")),
+            logprobs=scoring.normalise_logprob_content(ch.get("logprobs"), self.caps.token_format),
             input_tokens=u.get("prompt_tokens"),
             output_tokens=u.get("completion_tokens"),
             latency_s=lat,
@@ -286,9 +290,9 @@ class OpenAICompatBackend:
     def _decide(self, task: Task, item_text: str, labels_order: Sequence[str], codes: scoring.CodeMap | None) -> tuple[ChatResult, dict]:
         if self.mode == "logprob_scoring":
             msgs = build_messages(task, item_text, labels_order, "codes", codes.codes)
-            k = min(20, self.caps.max_top_logprobs)
+            k = self.caps.max_top_logprobs
             res = self._chat(msgs, self.max_tokens["logprob_scoring"], True, k, None)
-            sr = scoring.score_from_logprobs(res.logprobs, codes.codes, list(labels_order), self.threshold)
+            sr = scoring.score_from_logprobs(res.logprobs, codes.codes, list(labels_order), self.threshold, self.caps.label_position)
             info = {
                 "content": res.content,
                 "position": sr.position,
@@ -406,7 +410,7 @@ class OpenAICompatBackend:
                 probs, finfo = self.fallback.score_full_sequence(task, it, labels_order)
                 lat = time.perf_counter() - t0
                 label = max(labels_order, key=lambda l: probs[l])
-                preds.append(Prediction(it.id, label, {l: probs[l] for l in task.labels}, lat, finfo.get("input_tokens"), 0, self.provenance, False, None, {"method": "full_sequence(exact)", **finfo}))
+                preds.append(Prediction(item_id=it.id, label=label, probs={l: probs[l] for l in task.labels}, latency_s=lat, input_tokens=finfo.get("input_tokens"), output_tokens=0, provenance=self.provenance, cold=False, captured_mass=None, raw={"method": "full_sequence(exact)", **finfo}))
                 continue
             res, d = self._decide(task, it.text, labels_order, codes)
             lat = res.latency_s

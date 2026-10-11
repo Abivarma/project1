@@ -245,7 +245,7 @@ class ExactScorer:
             lat = time.perf_counter() - t0
             label = max(labels_order, key=lambda l: probs[l])
             raw = {k: v for k, v in info.items() if k != "codes"}
-            out.append(Prediction(it.id, label, {l: float(probs[l]) for l in task.labels}, lat, info.get("input_tokens"), 0, self.provenance, False, captured, raw))
+            out.append(Prediction(item_id=it.id, label=label, probs={l: float(probs[l]) for l in task.labels}, latency_s=lat, input_tokens=info.get("input_tokens"), output_tokens=0, provenance=self.provenance, cold=False, captured_mass=captured, raw=raw))
         return out
 
 

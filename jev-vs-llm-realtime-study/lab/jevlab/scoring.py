@@ -132,7 +132,7 @@ class DictTokenizer:
 # ---------------------------------------------------------------------------
 def normalize_token(tok: str) -> str:
     """Merge leading-space, newline, case and wrapping-punctuation variants of a code."""
-    return tok.strip().strip(_STRIP_CHARS).strip().upper()
+    return bpe_to_text(tok).strip().strip(_STRIP_CHARS).strip().upper()
 
 
 @dataclass
@@ -309,15 +309,19 @@ def score_from_logprobs(
     codes: Mapping[str, str],
     labels: Sequence[str],
     threshold: float = CAPTURED_MASS_THRESHOLD,
+    label_position: str = "search",
 ) -> ScoreResult:
     """Score an OpenAI-style `choices[0].logprobs.content` list (normalised entries).
 
     Each entry: {"token": str, "logprob": float, "top_logprobs": [{"token", "logprob"}]}.
+    label_position="search" locates the answer token from the generated text;
+    "first" reads position 0 (for servers whose per-position "token" field is not the
+    sampled token, e.g. mlx-lm; use with max_tokens=1 and a prompt that answers at once).
     """
     if not content:
         return ScoreResult(None, None, 0.0, 0.0, None, "empty_logprobs", fallback_needed=True, fallback_reason="empty_logprobs")
     tokens = [e.get("token", "") for e in content]
-    pos, how = find_label_position(tokens)
+    pos, how = (0, "first") if label_position == "first" else find_label_position(tokens)
     if pos is None:
         return ScoreResult(None, None, 0.0, 0.0, None, how, fallback_needed=True, fallback_reason=how)
     top = _logprob_entries(content[pos])
@@ -391,26 +395,35 @@ def full_sequence_probs(seq_logprobs: Mapping[str, float], n_tokens: Mapping[str
     return {l: float(v) for l, v in zip(labs, p)}
 
 
-def normalise_logprob_content(raw: Any) -> list[dict]:
+def bpe_to_text(tok: str) -> str:
+    """Raw byte-level-BPE / SentencePiece pieces ('ĠA', '▁A', 'Ċ') -> text (' A', ' A', newline)."""
+    return tok.replace("\u0120", " ").replace("\u2581", " ").replace("\u010a", "\n")
+
+
+def normalise_logprob_content(raw: Any, token_format: str = "text") -> list[dict]:
     """Normalise server-specific logprob payloads to OpenAI chat-completions entries.
 
     Accepts: OpenAI {"content": [...]}, a bare list (Ollama native /api/chat
-    "logprobs"), or LM Studio /v1/responses output_text "logprobs" lists.
+    "logprobs"), LM Studio /v1/responses output_text "logprobs" lists, and mlx-lm
+    (token_format="bpe_raw": pieces come from convert_ids_to_tokens). Each position's
+    top list is sorted by logprob (mlx-lm returns an unsorted argpartition).
     """
     if raw is None:
         return []
     if isinstance(raw, Mapping):
         raw = raw.get("content") or []
+    conv = bpe_to_text if token_format == "bpe_raw" else (lambda t: t)
     out = []
     for e in raw:
         if not isinstance(e, Mapping):
             continue
-        tops = e.get("top_logprobs") or []
+        tops = [t for t in (e.get("top_logprobs") or []) if isinstance(t, Mapping) and t.get("logprob") is not None]
+        tops = sorted(tops, key=lambda t: -float(t["logprob"]))
         out.append(
             {
-                "token": e.get("token", ""),
+                "token": conv(e.get("token", "") or ""),
                 "logprob": e.get("logprob"),
-                "top_logprobs": [{"token": t.get("token", ""), "logprob": t.get("logprob")} for t in tops if isinstance(t, Mapping)],
+                "top_logprobs": [{"token": conv(t.get("token", "") or ""), "logprob": t.get("logprob")} for t in tops],
             }
         )
     return out

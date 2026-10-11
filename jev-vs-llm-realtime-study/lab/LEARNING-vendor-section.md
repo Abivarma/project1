@@ -125,10 +125,10 @@ Headline numbers on the P3 reference split (`clinc150-banking15+oos`, 16 labels)
 
 | Features | N per class | Accuracy (CI95) | Macro-F1 | ECE raw → after T | p50 / p95 latency | Train time |
 |---|---|---|---|---|---|---|
-| TF-IDF word 1–2 + char 2–5 | 10 | 0.846 (0.800–0.892) | 0.847 | 0.275 → 0.053 | 1.45 / 1.97 ms | 3.2 s |
-| TF-IDF | 50 | 0.908 (0.867–0.946) | 0.907 | 0.122 → 0.022 | 1.47 / 2.84 ms | 5.1 s |
-| TF-IDF | 200 (in-scope capped at 100) | 0.938 (0.904–0.967) | 0.938 | 0.091 → 0.023 | 1.69 / 2.66 ms | 7.4 s |
-| model2vec potion-base-8M | 50 | 0.925 (0.887–0.958) | 0.925 | 0.116 → 0.030 | 0.25 / 0.56 ms | 2.6 s |
+| TF-IDF word 1–2 + char 2–5 | 10 | 0.846 (0.800–0.892) | 0.847 | 0.275 → 0.053 | 1.45 / 2.28 ms | 0.9 s |
+| TF-IDF | 50 | 0.908 (0.867–0.946) | 0.907 | 0.122 → 0.022 | 1.44 / 2.73 ms | 2.3 s |
+| TF-IDF | 200 (in-scope capped at 100) | 0.938 (0.904–0.967) | 0.938 | 0.091 → 0.023 | 1.42 / 2.10 ms | 4.8 s |
+| model2vec potion-base-8M | 50 | 0.925 (0.887–0.958) | 0.925 | 0.116 → 0.030 | 0.16 / 0.49 ms | 1.6 s |
 
 ECE uses 10 equal-mass bins. Latency and training times are noisy, because the container's 4 vCPUs were shared with LAB-A's model runs; rerun the sweep on an idle machine before quoting them. The raw logistic regression is **under**-confident (T ≈ 0.4–0.6 sharpens it). Temperature scaling needs the labelled calibration split, which is exactly the lesson from Jev's "calibrated without labels" pitch. P3 compares the N = 50 row with the lab zero-shot scorer (LAB-A) on the same split.
 

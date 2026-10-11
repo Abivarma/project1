@@ -76,6 +76,7 @@ def test_prompt_cache_accounting_with_long_rubric(stub):
                 + u["output_tokens"] * 0.50) / 1e6
     assert p1.raw["usd"] == pytest.approx(expected)
     assert p2.raw["usd"] < p1.raw["usd"]
+    assert p1.usd == p1.raw["usd"] and p2.usd == p2.raw["usd"]  # Prediction.usd (types.py contract change 3)
 
 
 def test_short_rubric_is_not_cached(stub):
@@ -111,6 +112,9 @@ def test_self_consistency_k_samples_charged_k_times(stub):
                                  for c in p.raw["calls"])
     assert p.output_tokens == sum(c["output_tokens"] for c in p.raw["calls"])
     assert p.raw["confidence_method"] == "self_consistency_k5"
+    assert p.usd == pytest.approx(sum(  # all k samples are charged
+        (c["input_tokens"] * 0.10 + c["cache_creation_input_tokens"] * 0.125 + c["cache_read_input_tokens"] * 0.01
+         + c["output_tokens"] * 0.50) / 1e6 for c in p.raw["calls"]))
 
 
 def test_self_consistency_requires_k_ge_2(stub):

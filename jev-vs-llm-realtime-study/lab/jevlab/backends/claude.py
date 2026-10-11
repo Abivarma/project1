@@ -301,7 +301,8 @@ class ClaudeBackend:
                 raw["error"] = "no_valid_samples"
         return Prediction(item_id=item.id, label=label, probs=probs, latency_s=latency,
                           input_tokens=in_tok if ok else None, output_tokens=out_tok if ok else None,
-                          provenance=self._provenance(mock_seen), cold=cold, raw=raw)
+                          provenance=self._provenance(mock_seen), cold=cold,
+                          usd=raw["usd"] if ok else None, raw=raw)
 
     # ------------------------------- DecisionBackend ----------------------------------
     def predict(self, task: Task, items: Sequence[Item], labels_order: Sequence[str] | None = None) -> list[Prediction]:

@@ -26,7 +26,6 @@ from __future__ import annotations
 
 import argparse
 import csv
-import dataclasses
 import math
 import platform
 import random
@@ -191,8 +190,12 @@ def apply_temperature(logp: np.ndarray, t: float) -> np.ndarray:
 
 
 # ------------------------------------- backend ------------------------------------------
+_UNSET = object()
+
+
 class C1Backend:
-    """DecisionBackend for C1a. predict() fits lazily on the task's train split if not fitted."""
+    """DecisionBackend for C1a. Implements the optional fit(task) hook; predict()/probe() still fit lazily
+    on the task's train split as a fallback when fit() was not called."""
 
     name = "c1"
     mode = "classifier"
@@ -211,7 +214,11 @@ class C1Backend:
     def provenance(self) -> str:
         return f"LAB:c1:{self.cfg.model_id}:fp32:{self.cfg.hardware}"
 
-    def fit(self, task: Task, n_per_class: int | None = None) -> dict:
+    def fit(self, task: Task, n_per_class: int | None | object = _UNSET) -> dict:
+        """Optional DecisionBackend hook (types.py): train on the task's TRAIN split. The runner calls fit(task)
+        before probe() and records train_time_s; n_per_class defaults to the config value (None = all)."""
+        if n_per_class is _UNSET:
+            n_per_class = self.cfg.n_per_class
         train = sample_train(task, n_per_class, self.cfg.seed)
         counts = Counter(it.label for it in train)
         missing = [lab for lab in task.labels if counts.get(lab, 0) == 0]
@@ -300,7 +307,7 @@ class C1Backend:
 
 
 # --------------------------------------- sweep ------------------------------------------
-EXTRA_COLS = ("n_per_class", "n_per_class_min", "n_per_class_max", "n_train", "train_time_s")
+EXTRA_COLS = ("n_per_class_min", "n_per_class_max", "n_train")  # after RunResult.to_row() columns
 
 
 def _metrics():
@@ -332,17 +339,16 @@ def _evaluate(task: Task, backend: C1Backend, logp_test: np.ndarray, lats: list[
         p50_latency_s=lat["p50"], p95_latency_s=lat["p95"], cold_latency_s=cold,
         mean_input_tokens=None, mean_output_tokens=None, usd_per_1k_decisions=usd_1k,
         mean_captured_mass=None, permutation_flip_rate=0.0, invalid_rate=s["invalid_rate"],
+        n_per_class=n_req, train_time_s=ti["train_time_s"],
     )
-    extra = {"n_per_class": n_req, "n_per_class_min": ti["n_per_class_min"],
-             "n_per_class_max": ti["n_per_class_max"], "n_train": ti["n_train"],
-             "train_time_s": ti["train_time_s"], "nll": s.get("nll"), "aurc": s.get("aurc"), "p99": lat["p99"]}
+    extra = {"n_per_class_min": ti["n_per_class_min"], "n_per_class_max": ti["n_per_class_max"],
+             "n_train": ti["n_train"], "nll": s.get("nll"), "aurc": s.get("aurc"), "p99": lat["p99"]}
     return rr, extra
 
 
 def _row(rr: RunResult, extra: dict) -> dict:
-    d = dataclasses.asdict(rr)
-    lo, hi = d.pop("accuracy_ci95")
-    d["accuracy_ci95"] = f"[{lo:.4f}, {hi:.4f}]"
+    """RunResult.to_row() (the one CSV convention, types.py), then the c1 extras after it."""
+    d = rr.to_row()
     for k in EXTRA_COLS:
         d[k] = extra[k]
     return d
@@ -367,8 +373,12 @@ def run_sweep(sweep_cfg: Mapping[str, Any], out_csv: Path, out_log: Path) -> lis
         f"platform {platform.platform()}  cpus {__import__('os').cpu_count()}")
     say("# Provenance LAB = measured in this container on public data; NOT a production number.")
     la = __import__("os").getloadavg()
-    say(f"# load average at start: {la[0]:.2f} {la[1]:.2f} {la[2]:.2f} (4 vCPUs; values > 1 mean other lab jobs shared the CPU, "
-        "so latency/training times are pessimistic and noisy; accuracy/ECE are deterministic)")
+    say(f"# CPU CONTENTION: load average at start {la[0]:.2f} {la[1]:.2f} {la[2]:.2f} on 4 vCPUs. LAB-A's local-model runs "
+        "(llama-server / Ollama) shared this container's CPUs during the sweep, so latency and training times are "
+        "pessimistic and noisy; accuracy / F1 / ECE / Brier are deterministic and unaffected. Re-run on an idle machine "
+        "before quoting timings.")
+    say("# CSV: RunResult.to_row() columns (accuracy_ci95 -> accuracy_ci95_lo/_hi; n_per_class and train_time_s are "
+        "RunResult fields; n_per_class = requested N), then extras: " + ", ".join(EXTRA_COLS))
     say("# Latency: batch size 1, warm, single-threaded BLAS. usd_per_1k = mean_latency_s*1000/3600*usd_per_vcpu_hour "
         f"(usd_per_vcpu_hour={base.get('usd_per_vcpu_hour', C1Config.usd_per_vcpu_hour)} [Guessing; range 0.02-0.10]).")
     say("# permutation_flip_rate=0.0 is structural (a classifier has no option order), not measured.")
@@ -402,7 +412,7 @@ def run_sweep(sweep_cfg: Mapping[str, Any], out_csv: Path, out_log: Path) -> lis
                         f"cold={cold*1e3:.2f}ms train={info['train_time_s']:.3f}s n/class={info['n_per_class_min']}-{info['n_per_class_max']} "
                         f"n_train={info['n_train']}  {rr.provenance}")
     out_csv.parent.mkdir(parents=True, exist_ok=True)
-    fields = [f.name for f in dataclasses.fields(RunResult)] + list(EXTRA_COLS)
+    fields = list(rows[0].keys()) if rows else []
     with out_csv.open("w", newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=fields)
         w.writeheader()

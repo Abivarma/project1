@@ -77,6 +77,17 @@ backends:
     n_threads: 4
     n_gpu_layers: 0
 
+  - name: c1a-tfidf                  # LAB-B's classical baseline on the SAME split (needs labels: N=50 per class)
+    kind: c1
+    modes: [classifier]
+    features: tfidf
+    n_per_class: 50
+    C: 10.0
+    word_ngrams: [1, 2]
+    char_ngrams: [2, 5]
+    latency_threads: 1
+    usd_per_vcpu_hour: 0.0425        # [Guessing]
+
 agreement:
   server: "llama-server:logprob_scoring"
   reference: "llamacpp-inproc/codes:exact_scoring"

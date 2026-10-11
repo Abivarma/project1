@@ -106,6 +106,7 @@ def test_prediction_parse(stub):
         assert p.input_tokens > 0 and p.output_tokens > 0
         assert p.raw["model_answered"] == "jev-1.13.0"
         assert p.raw["usd"] == pytest.approx(p.input_tokens * 0.042 / 1e6)  # output not billed
+        assert p.usd == p.raw["usd"]  # Prediction.usd (types.py contract change 3)
     assert preds[0].cold and not any(p.cold for p in preds[1:])
 
 

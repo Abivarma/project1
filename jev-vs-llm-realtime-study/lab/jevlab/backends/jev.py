@@ -184,7 +184,7 @@ class JevBackend:
         if ans is None:
             raw["error"] = "no_choice_answer"
             return Prediction(item.id, None, None, latency, usage.input_tokens, usage.output_tokens,
-                              self._provenance(mock_seen), cold=cold, raw=raw)
+                              self._provenance(mock_seen), cold=cold, usd=raw["usd"], raw=raw)
         probs = {lab: float(ans.probabilities.get(lab, 0.0)) for lab in task.labels}
         extra = set(ans.probabilities) - set(task.labels)
         s = sum(probs.values())
@@ -202,7 +202,7 @@ class JevBackend:
             raw["fanout_k"] = 1 + len(others)
         return Prediction(item_id=item.id, label=label, probs=probs, latency_s=latency,
                           input_tokens=usage.input_tokens, output_tokens=usage.output_tokens,
-                          provenance=self._provenance(mock_seen), cold=cold, raw=raw)
+                          provenance=self._provenance(mock_seen), cold=cold, usd=raw["usd"], raw=raw)
 
     # ------------------------------- DecisionBackend ----------------------------------
     def predict(self, task: Task, items: Sequence[Item], labels_order: Sequence[str] | None = None) -> list[Prediction]:

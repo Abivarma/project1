@@ -99,3 +99,20 @@ def test_missing_label_in_train_raises():
     t2 = Task(t.name, t.instructions, t.labels, t.label_descriptions, items, t.source, t.seed)
     with pytest.raises(RuntimeError, match="no train items"):
         C1Backend().fit(t2, 10)
+
+
+def test_fit_hook_uses_config_n_and_lazy_fallback(monkeypatch):
+    """Optional DecisionBackend.fit(task) hook (types.py): runner calls fit(task) then probe(); no refit after."""
+    t = _task()
+    b = C1Backend({"n_per_class": 12})
+    info = b.fit(t)
+    assert info["n_train"] == 12 * len(LABELS) and info["train_time_s"] > 0
+    calls = []
+    orig = b.fit
+    monkeypatch.setattr(b, "fit", lambda *a, **k: calls.append(1) or orig(*a, **k))
+    b.probe(t)
+    b.predict(t, t.split("test"))
+    assert calls == []  # already fitted: probe/predict do not refit
+    lazy = C1Backend({"n_per_class": 7})
+    lazy.predict(t, t.split("test")[:2])  # fallback: lazy fit inside predict()
+    assert lazy.train_info["n_train"] == 7 * len(LABELS)
