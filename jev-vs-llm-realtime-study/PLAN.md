@@ -1,127 +1,243 @@
-# Plan — Jev (TypeSafe AI "System One") vs LLMs for Real-Time Experiences
+# Plan v2: Jev (TypeSafe AI "System One") vs LLMs for real-time experiences
 
-Status: v1 DRAFT (Jev edition), pending plan-critic validation
-Supersedes: v0, which wrongly read "Jev" as JEPA. The user corrected this: Jev = TypeSafe AI's System One model.
+Status: **v2**. It applies the Phase 0 plan-critic review in `reviews/phase-0-plan-critic.md` (verdict PASS-WITH-FIXES). Each fix's disposition is in §9.
 
-## 0. Framing (read first)
+History:
+- v0 wrongly read "Jev" as JEPA.
+- v1 re-scoped the study to TypeSafe's Jev.
+- v2 applies critic fixes 1–12 and LL1–LL8, and adds the user's Local Lab requirement.
 
-**What Jev is** [Certain — vendor docs, docs.typesafe.ai, read 2026-10-11]
-- TypeSafe AI's first "System One model" (`jev-1.13.0`), announced **2026-10-11**, early access.
+## 0. Framing
+
+### What Jev is
+Source: vendor docs at docs.typesafe.ai, read 2026-10-11. Tags are verified in Phase 1.
+- **Identity:** the first "System One model", `jev-1.13.0`. Announced 2026-10-11. Early access with a waitlist.
 - **Input:** text only (string / JSON / array).
-- **Output:** typed decisions with probabilities, through three primitives: **Choice** (one of ≤255 options), **Score** (rubric levels), and **Noul** (probability of yes). No text generation, no code, no tool calls.
-- **Price:** $0.042 per million input tokens. Output is free.
-- **Context:** 64k tokens per request (32k for state plus the longest question).
-- **Rate limits:** 100K tokens/s and 80 requests/s, adjusted dynamically.
-- **Training:** RLCD (RL for Calibrated Decisions). No customer fine-tuning.
+- **Output:** typed answers with probabilities and a confidence value:
+  - **Choice:** up to 255 options; larger sets go through a vendor two-stage process with "occasional slowdown".
+  - **Score:** 2–10 rubric levels.
+  - **Noul:** the probability that the answer is yes.
+- **Cannot:** generate text or code, call tools, or explain.
+- **Price:** $0.042 per million input tokens. Question instructions and criteria count as input. Output is reported in `usage` but not billed.
+- **Context:** 64k tokens per request; 32k for state plus the longest question.
+- **Rate limits:** 100K tokens/s and 80 requests/s, dynamic; enterprise plans get more.
+- **Customisation:** no customer fine-tuning.
+- **Region:** service "currently based" on the US West Coast [Likely].
 
-**Uncomfortable truths to carry through the whole study**
-1. **Evidence is almost entirely vendor self-reported and launched today.** Examples: "193.6× faster, 444.6× cheaper", "70–500 ms", "zero hallucinations". No independent benchmark exists yet. Every Jev performance claim is capped at [Likely], or at [Guessing] where it is marketing.
-2. **Jev is not an LLM replacement.** It cannot write replies, explain, plan multi-step, call tools, or take images or audio. The vendor's own docs say so. The real question is *which parts of a real-time system are System-1-shaped (fast, bounded decisions) versus System-2-shaped (generation, reasoning)*.
-3. **"Type-safe / can't hallucinate" is weaker than it sounds.** LLM structured outputs (constrained decoding) also guarantee schema validity. Jev can still pick the *wrong* valid option; calibration helps only in aggregate (the vendor admits this). Its real differentiators to test are **latency, price, and calibrated confidence**.
-4. **The incumbent for System-1 tasks is not only an LLM.** A fine-tuned small classifier (encoder model, or embeddings + logistic regression) is often faster and cheaper still, but needs labelled data and retraining. A fair study must include it.
-5. **Jevons paradox (the name's origin):** if decisions get cheaper, teams make many more of them (speculative fan-out), so total spend and risk can rise. This is a second-order effect to analyse.
+### Uncomfortable truths to carry through the study
+1. **The evidence is vendor self-reported, from launch day.**
+   - "193.6× faster, 444.6× cheaper" is in the vendor's words "the higher end of real-world gains", measured against frontier or reasoning LLMs.
+   - "238×" is a list-price ratio ($10 Fable 5.1 ÷ $0.042).
+   - The homepage example implies about 75× faster and 171× cheaper.
+   - "0% hallucination" is true by construction (outputs are restricted to the defined options), not measured.
+   - Vendor "accuracy" means agreement with GPT-6 Astra / Fable 5.1, not ground truth.
+2. **Jev is not an LLM replacement.** The real question is which parts of a real-time system are System-1-shaped (bounded decisions) and which are System-2-shaped (generation, reasoning, multimodal).
+3. **The headline depends on the comparator** (critic Risk 1).
+   - Against a cached small-tier LLM (Claude Haiku 5.5 at $0.10/$0.50, cache reads about $0.01), Jev's price per decision is roughly 1–3.5× lower, near parity [Guessing; re-derived in M1].
+   - Decisions are an estimated 1–3% of the total bill once generation is included.
+   - Price is therefore a differentiator only against mid and frontier tiers.
+   - The candidate differentiators are critical-path latency, native calibrated distributions with no labels needed, API simplicity, and capacity/operational risk.
+4. **Capacity may be the binding constraint** (critic Risk 2). At default limits Jev sustains roughly 50 messages/s (token-bound). The SDK defaults (10 s timeout, automatic retries) would break a real-time SLO unless they are overridden.
+5. **Quality and calibration cannot be measured live here.** There are no API keys and Jev has a waitlist. The only first-party measured numbers in the study will come from the Local Lab and the C1 classifier, run on public data and labelled as such.
+6. **Two loose phrases need correcting:**
+   - "Type-safe" is not unique. LLM structured outputs also guarantee schema validity, with caveats: refusals, `max_tokens` truncation, unsupported schema features. The real risk on either side is a *wrong valid option*.
+   - The name honours W. S. Jevons. The vendor's stated bet is that cheaper decisions bring a demand rebound, so total spend can rise.
 
-## 1. The problem we design for
+## 1. Problem and requirements
 
-**Primary scenario: "Real-time AI customer-support assistant" (chat + voice)** for a large consumer company.
-- Every inbound message passes through **decision points**:
-  1. Input guardrail (abuse, prompt injection, PII present).
-  2. Intent routing (about 20 intents).
-  3. Urgency / frustration score.
-  4. "Needs human?" check.
-  5. Policy-eligibility checks.
-  6. Next-best-action choice.
-  7. Output guardrail on the generated reply.
-- Then **generation**: a natural-language reply (System 2).
-- Real-time NFRs (requirements to be finalised in Phase 2):
-  - Decision path p95 ≤ 300 ms.
-  - Chat time-to-first-token ≤ 1 s.
-  - Voice time-to-first-audio ≤ 800 ms.
-- Scale: 50M messages/day, peak 2,000 msg/s (to be validated as plausible).
-- Why this scenario: it contains *both* System-1 and System-2 work. It is a classic system-design interview prompt, and the vendor's own intent-routing pattern targets it, so the comparison is fair to both sides.
+### Assumed exemplar
+The user's actual real-time workload is **unknown**. The primary scenario below is an assumed exemplar, and it is Jev's showcased home turf (the vendor's intent-routing doc uses customer-service routing). It is balanced by modelling Jev's losses inside it.
 
-**Secondary scenarios** (short, to sharpen "where each wins"):
-- **S2: High-volume real-time moderation / guardrails** (pure System-1, large token volume). This is where price per token dominates, and where a fine-tuned classifier is the strongest rival.
-- **S3: Numeric / temporal decisions** (fraud thresholds, date windows, counting). Jev's documented weakness, so the work stays in code or an LLM.
-- **S4: Real-time game / agent action selection** (vendor's Doom demo, 10 queries/s). Shows the per-decision latency budget.
+### Clarification questions
+These go into the study's interview script and `requirements.md`:
+- Modality: chat, voice, or agent?
+- What is the latency SLO, and where does the clock start and stop?
+- Which regions are the users in?
+- What is the volume and the peak?
+- Which languages?
+- Are labels available?
+- How often does the taxonomy (the set of intents) change?
+- Compliance and data residency (EU, India DPDP)?
+- Is the cost of errors asymmetric?
+- What is the budget?
 
-## 2. Architectures compared (fairness rule: no strawmen)
+### Defaults when the answers are unknown
+- **Volumes:** a sweep over 1M, 10M and 50M messages/day, where a message is one user turn. 50M/day is about 579 msg/s on average, and the assumed peak is 3.5× that, about 2,000 msg/s.
+- **Regions:** US-West, US-East, EU and India.
+  - India is flagged as likely for this user [Guessing, from repo commit timezone].
+  - From India, the round trip to a US-West-only service alone is about 200–280 ms [verify in R3].
+- **Parameter card:** a "bring your own workload" card in M1 lets the user plug in their own numbers.
 
-| ID | Name | Decisions handled by | Generation handled by |
+### Primary scenario P: real-time customer-support assistant (chat and voice)
+Decision points per message (3–15, default 7):
+1. Input guardrail.
+2. Intent routing (Banking77-like).
+3. Urgency/frustration score.
+4. Needs-human check.
+5. Policy check, split so the model extracts fields and code does the comparison.
+6. Next-best action.
+7. Output guardrail, run per streamed sentence for voice.
+
+Then the system generates a reply (System 2).
+
+**In-scenario Jev losses to model:**
+- Date and amount eligibility.
+- Multi-hop reasoning.
+- Account history longer than 32k tokens.
+- Non-English or code-mixed text.
+- Image attachments.
+- Prompt injection aimed at the guardrail itself.
+
+### Secondary scenarios
+| ID | Scenario | Why included |
+|---|---|---|
+| S2 | High-volume moderation/guardrails | Pure System-1 work. C1 is the strongest rival. |
+| S4′ | Tool/skill routing inside an LLM agent loop | Vendor cookbook: 182 skills. |
+| S5 | Voice turn-taking / endpointing decision | Latency-critical. |
+| S6 | Real-time speech-to-speech conversation, or multi-hop eligibility over long history | **The LLM wins** here. |
+| Boundary | Numeric, date and counting tasks | A **"Jev boundary checklist"**, not a scenario. |
+| Sanity | Doom demo | One-line check: about $7/h at 10 queries/s implies about 4.6K tokens/query. |
+
+## 2. Architectures: the comparator ladder (no strawmen; every ratio names its rung)
+
+| ID | Family | Decisions | Generation | Rung / note |
+|---|---|---|---|---|
+| L1 | LLM | Frontier model with reasoning, one call per decision | Frontier | **Vendor comparator / anti-pattern**. Used only to reconcile with the vendor's numbers; never a headline |
+| L1b | LLM | Frontier model, no reasoning, batched | Frontier | Rung b |
+| L2m | LLM | Mid-tier, batched structured output | Mid | Rung c |
+| L2 | LLM | Small tier (Haiku 5.5 class and the cheapest OpenAI/Gemini tiers), batched, rubric cached, thinking off | Mid, streamed | Rung d: **the fair API-LLM baseline** |
+| L2c | LLM | L2 with confidence escalation to frontier (confidence = logprobs where the provider has them, otherwise k-sample self-consistency at k× cost) | Mid | Cascade peer to J2 |
+| L3 | Neutral | Self-hosted small open-weight LLM, option scoring in one forward pass, full distribution, in-region | Mid | Rung e: closest technical rival. **Also the Local Lab** |
+| C1a | Neutral | TF-IDF/embeddings + logistic regression (few labels) | Mid | Rung f. **Measured here on CPU** |
+| C1b | Neutral | Fine-tuned small encoder | Mid | Rung f. Estimated from the literature |
+| J1 | Jev | Jev, one fan-out request | Mid | — |
+| J2 | Jev | Jev with confidence-gated escalation to an LLM or a human; numbers and dates handled in code | Mid | Cascade |
+| D1 | Neutral | Jev (or an LLM) labels data; a distilled classifier serves the high-volume intents; Jev keeps the long tail and cold start | Mid | The "teacher" pattern |
+| V-S2S | LLM | Speech-to-speech real-time model | — | Voice, LLM way |
+| V-casc | Jev | ASR → decisions (Jev/L2/C1) → LLM → TTS | — | Voice, forced for Jev because it is text-only |
+
+**Design idea to evaluate:** a **Decision Service port**, i.e. a typed Choice/Score/Noul interface with swappable backends (Jev, L2, L3, C1). It is the build-vs-buy hedge against a vendor that launched today.
+
+## 3. Pre-registered hypotheses
+Each hypothesis has a falsification rule fixed before Phase 3. No recommendation is pre-committed.
+
+| ID | Hypothesis | Falsified if |
+|---|---|---|
+| P1 | From US-West, Jev's decision-path p95 is ≤ 300 ms while the best API-LLM decision path (L2) is > 300 ms | Modelled L2 p95 is ≤ 300 ms, or Jev p95 is > 300 ms, using ledger latency distributions |
+| P1-IN | From India, neither Jev nor a US-hosted API LLM meets a 300 ms decision p95; only in-region L3 or C1 does | Jev p95 from India is ≤ 300 ms |
+| P2 | Including generation, J1 cuts the total per-message bill by < 5% compared with L2 (cached small tier) | The modelled saving is ≥ 5% at default parameters |
+| P3 | With ≥ N labelled examples per intent (N reported), C1a matches the best zero-shot decision model within 2 accuracy points at lower cost and latency | Measured on the public dataset; compared against vendor/literature numbers, with caveats |
+| P4 | J1 cannot serve 2,000 msg/s peak at default rate limits | Headroom ratio is ≥ 1 |
+| P5 | Jev's advantage is largest at zero labels with a churning taxonomy | The cascade sim and crossover analysis show otherwise |
+| P6 | Jevons-style speculative fan-out raises decision spend k×, while the total bill stays dominated by generation | Decisions exceed 25% of the bill at k ≤ 5 |
+
+## 4. Metrics
+- **Latency:**
+  - Every SLO states where the clock starts and stops. Voice starts at end-of-speech and includes endpointing.
+  - Network round-trip time by region, TLS/connection reuse, and queueing.
+  - p50/p95/p99, including 429/529 retries.
+  - Hedged requests, and cold start for self-hosted models.
+  - Latency vs state size.
+  - Critical path vs off-path: run the guardrail in parallel with speculative generation.
+- **Tokens and charges:**
+  - State tokens and question tokens kept separate.
+  - LLM caching modelled; Jev gets no cache discount.
+  - Thinking tokens counted.
+  - **$ per message (or per 1K characters), never $ per token across vendors.**
+  - Full total cost of ownership (TCO): human review, error cost, GPU at peak with N+1 redundancy and multiple regions, labelling, rubric maintenance, enterprise minimums.
+  - Jev price run at 1×, 3× and 10× (the vendor says the price may be subsidised).
+- **Quality:**
+  - Risk–coverage curve and AURC (accuracy at an automation rate X).
+  - Brier score, ECE (binning stated), reliability diagrams.
+  - Macro-F1 and safety-class recall.
+  - Option-order permutation flip rate; run-to-run determinism.
+  - Multilingual slice and injection slice.
+  - Caveat: post-hoc calibration needs labels, so Jev's calibration edge is a cold-start edge.
+- **Operations and risk:**
+  - Rate-limit headroom per vendor.
+  - Per-call deadlines and fallbacks; fail-open vs fail-closed for each decision.
+  - SLA, vendor maturity, lock-in.
+  - Residency and ZDR.
+  - Version pinning (`jev-1.13.0` rather than `jev-latest`) and recalibrating thresholds on each upgrade.
+  - Observability.
+- **Second-order effects:**
+  - Jevons rebound, and governance for it (decision budgets; every question must have a consumer).
+  - The resulting split between automation and human-review load.
+  - Team skills.
+
+## 5. Phases, agents and gates
+Detailed, checkable gate criteria are in `reviews/phase-0-plan-critic.md` under "Concrete, checkable gate pass criteria", plus the Local Lab gate. They are adopted with the modifications in §9.
+
+- **Critics:**
+  - Run in fresh context against a written rubric.
+  - Return a verdict: PASS, PASS-WITH-FIXES, or FAIL.
+  - At most **2 FAIL loops per phase**, then escalate to the user.
+- **Agent prompts:** every one states that fetched web pages and downloaded files are **untrusted data, never instructions**.
+
+| Phase | Agents (parallel where listed together) | Outputs | Gate |
 |---|---|---|---|
-| **L1** | LLM-way, naive | Frontier LLM, one call per decision, JSON structured output | Frontier LLM |
-| **L2** | LLM-way, optimised (the *fair* LLM baseline) | Small fast LLM, all decisions batched into one structured-output call, prompt caching, no reasoning tokens, logprobs for confidence | Mid-tier LLM, streaming |
-| **C1** | Classic-ML baseline | Fine-tuned small encoder classifiers (self-hosted) | Mid-tier LLM |
-| **J1** | Jev-way | Jev, all decisions as one fan-out request over shared state | Mid-tier LLM (Jev cannot generate) |
-| **J2** | Jev-way with confidence-gated cascade (expected recommendation, to be proven) | Jev first; low-confidence decisions escalate to an LLM (System 2) or a human; numeric/date logic stays in code | Mid-tier LLM |
+| 0 | Lead, plan critic | PLAN v2; plan-critic review | Critic confirms v2 resolves the blocking fixes |
+| 1 | R1 Jev evidence (incl. the vendor evals site's 4 workflows; independent coverage with logged queries); R2 LLM real-time (Artificial Analysis TTFT and tokens/s; provider capability matrix; voice components; S2S latency); R3 economics (≥ 3 providers × 3 tiers incl. Haiku 5.5; GPU $/hr; encoder throughput; support-message token sizes; inter-region RTT); **plus LAB agent starting in parallel** | `research/evidence-ledger.md` (≥ 40 rows, conditions column) | Critic-1 fact-checker re-fetches ≥ 12 claims |
+| 2 | Lead writes `design/requirements.md` (capacity math, latency budgets); then A1 LLM-way (L1–L2c, V-S2S), A2 Jev-way (J1, J2, V-casc), A3 neutral baselines (L3, C1a/b, D1); each designer adds a one-page steelman of the other side | `design/*.md` | Critic-2 principal architect, with fairness checklist |
+| 3 | M1 quant model; LAB completes (capped at about 30% of Phase 3 effort) | `model/` (parameters file tied to the ledger, ladder, volume sweep, price sensitivity, tornado chart, Monte Carlo latency, cascade sim, tests); `lab/` | Critic-3 quant reviewer, plus Local Lab gate |
+| 4 | Writer | `STUDY.md` (30-second and 2-minute answers, clarification questions, back-of-envelope sheet, latency-budget diagram, ladder, where-each-wins matrix on ≥ 8 axes, hybrid recommendation, failure modes, eval/rollout, build vs buy, ≥ 5 "what would change my mind" triggers, 45-minute whiteboard script, ≥ 10 follow-up questions, glossary) | Critic-4 interview panel (hiring manager, principal architect, skeptic) |
+| 5 | Lead, final critic | Number-consistency script; README; push; private HTML view with an interview cheat sheet | Final consistency critic |
 
-## 3. Metrics (what "detailed study" means)
-- **Latency:** per-decision p50/p95, end-to-end decision path, chat TTFT, voice time-to-first-audio; network RTT and region effects (Jev is US West Coast only today).
-- **Tokens:** input tokens per message, output tokens (LLM JSON plus any reasoning tokens; Jev output is free), cached vs uncached, and how fan-out changes token counts.
-- **Charges:** $ per decision, per 1M messages, per month at scale. Show the split between decisions and generation (the punchline is likely that generation dominates the cost, which bounds Jev's total-bill savings).
-- **Quality:** accuracy, calibration (ECE), consistency, schema-validity rate, known failure modes (literal reading, math, dates, indirection, context rot, prompt injection, option-order bias).
-- **Operations and risk:** rate limits vs peak load, SLA, vendor maturity, lock-in, data residency/ZDR, version pinning and threshold drift, observability, eval strategy, rollout.
-- **Second-order effects:** Jevons-paradox spend, automation rate vs human-review load, team skills.
+## 6. Local Lab (user requirement: "run local AI models on Mac, load any model and learn")
+- **Location:** `lab/`, configured from YAML. Built from day 1 in parallel with Phase 1 (LL8).
+- **Backends:**
+  - **One OpenAI-compatible adapter** for Ollama, LM Studio, llama.cpp `llama-server` and `mlx-lm`, with capability flags: `supports_json_schema`, `supports_logprobs`, `max_top_logprobs`, `logprob_mode`, `label_scoring` (LL1).
+  - An in-process **exact scorer** on CPU, used as a reference.
+  - The **Jev SDK** and **Claude SDK** backends, tested against a local stub server that replays the documented responses.
+- **Modes for the same task:**
+  - (a) **LLM way:** JSON-schema generation.
+  - (b) **"Jev-style decision primitive (emulation)":** option probabilities from logprobs, then temperature scaling. It is never called "local Jev".
+  - (c) Real Jev, when the user has a key.
+- **Engineering rules:**
+  - A startup **capability probe** that fails loudly (LL2).
+  - A tokenizer-aware scorer: single-token codes, variant merging, label-position search, thinking disabled, full-sequence fallback (LL3).
+  - A train/calibration/test split with bootstrap confidence intervals (LL4).
+  - `LAB:` and `MOCK` provenance tags, with a leakage test (LL5).
+  - Model files: GGUF/safetensors only, no `trust_remote_code`, pinned revisions (LL6).
+- **Data:** public **Banking77** (CC-BY-4.0) and **CLINC150** (out-of-scope class). Smoke runs use a 10–20-intent subset with a ≤ 1B model on Linux CPU, via Ollama or llama.cpp.
+- **`LEARNING.md`:**
+  - A table of Mac RAM tiers vs model size.
+  - Install commands for each backend.
+  - A **verified-on matrix**: Linux CPU paths that were executed here vs macOS paths that are **untested**.
+  - At least 6 exercises.
+  - Troubleshooting.
+- **C1a** (TF-IDF/embeddings + logistic regression) is measured on the same split. Together with the lab runs, these are the **only first-party measured numbers** in the study.
 
-## 4. Phases, agents, outputs, gates
+## 7. Evidence standards
+- **Source order:** official docs and pricing pages; then independent benchmarks such as Artificial Analysis, with date and probe location; then papers; then press; then vendor marketing; then community posts.
+- **Ledger columns:** ID, claim, value, unit, **conditions**, URL, type, access date, VENDOR flag, confidence, counter-evidence.
+- **Confidence caps:** VENDOR performance rows are at most [Likely]. Marketing rows are at most [Guessing].
+- **URLs:** every URL must actually have been fetched. Failed fetches are logged.
 
-Every phase ends with a **critic agent gate** that writes `reviews/phase-N-*.md` with verdict `PASS` / `PASS-WITH-FIXES` / `FAIL` and checkable findings. Fixes are applied before the next phase. A FAIL repeats the phase.
-
-### Phase 0: Plan and plan validation
-- **Owner:** lead. **Critic:** plan critic.
-- **Output:** this file at v2, plus `reviews/phase-0-plan-critic.md`.
-
-### Phase 1: Evidence (3 research agents in parallel)
-- **R1, Jev evidence:** the vendor blog, homepage, all relevant docs (models, API, confidence, patterns, jaggedness, parallel-questions cookbook, SDK), and the "Lies, Damned Lies, and Benchmarks" post. Also any independent coverage, reviews, Hacker News/X discussion, or third-party tests (expect very little on launch day), plus company facts (founder, funding).
-- **R2, LLM real-time evidence:** current (Oct 2026) model latency (TTFT, output tokens/s) from independent benchmarks such as Artificial Analysis; real-time voice APIs; structured-output guarantees (constrained decoding); logprob availability; LLM calibration literature (RLHF overconfidence).
-- **R3, Economics evidence:**
-  - Current LLM prices: input, output, and cached tokens, for frontier, mid, and small tiers across Anthropic, OpenAI, and Google.
-  - Classifier self-hosting costs: GPU $/hr and encoder throughput.
-  - Typical token sizes for support messages and system prompts.
-- **Output:** `research/evidence-ledger.md`. Each claim gets an ID, value, unit, source URL, source type, date, a vendor-claim flag, and a confidence tag.
-- **Gate (Critic-1, fact-checker):** independently re-verify the 10+ highest-impact claims. Flag vendor-only claims. Require counter-evidence for each headline claim.
-
-### Phase 2: Architecture (2 design agents in parallel)
-- **Lead first writes `design/requirements.md`:** FRs, NFRs, latency budget, capacity estimate (back-of-envelope).
-- **A1, LLM-way (`design/llm-architecture.md`):** L1 and L2.
-- **A2, Jev-way (`design/jev-architecture.md`):** J1 and J2, plus C1 as the baseline.
-- **Each design includes:** a mermaid diagram, data flow, per-hop latency budget, token flow, scaling against rate limits, failure modes and fallbacks, observability, eval and rollout plan, security (prompt injection).
-- **Gate (Critic-2, principal-architect persona):** fairness, feasibility today, consistency with the ledger, missing NFRs.
-
-### Phase 3: Quantitative model and "do it both ways" code (2 agents in parallel)
-- **M1:** `model/cost_model.py` (tokens and $ per scenario × architecture, plus sensitivity analysis), `model/latency_model.py` (Monte Carlo latency budget from ledger distributions), `model/cascade_sim.py` (synthetic calibrated-confidence cascade showing the trade-off between threshold, automation rate, accuracy, and cost), pytest tests, and charts/CSVs in `model/outputs/`.
-- **M2:** `harness/`, the same decision task implemented *the LLM way* (Anthropic structured outputs) and *the Jev way* (TypeSafe SDK). It shares a small labelled dataset and an evaluator (accuracy, ECE, latency, tokens, $). It has a **mock mode tested here**; live mode needs the user's API keys. No keys exist in this environment, so the live path is *untested* and labelled as such.
-- **Gate (Critic-3, quant reviewer):** re-run everything, hand-verify at least 3 numbers, check that every parameter traces to a ledger ID or is tagged [Guessing] with a range, and confirm the harness API calls match the docs.
-
-### Phase 4: Interview-ready study (writer agent)
-- **`STUDY.md` sections:**
-  - A 2-minute answer.
-  - Concepts in plain English (System 1 vs System 2).
-  - The LLM way, then the Jev way.
-  - Side-by-side numbers (tokens, $, latency).
-  - Where each wins (a decision matrix).
-  - Hybrid recommendation.
-  - Risks, and what would change the recommendation.
-  - A whiteboard script for a 45-minute interview.
-  - Likely follow-ups with strong answers.
-  - Glossary and sources.
-- **Gate (Critic-4, interview panel):** a hiring manager, a principal architect, and a skeptic check clarity, accuracy against the ledger and model, overclaims, and what a top candidate would add.
-
-### Phase 5: Final integration
-- **Final consistency critic:** every number in STUDY.md matches the ledger or model outputs; tests pass; links valid.
-- Write `README.md`, then commit and push to `ccr-b41820fd-rls3og`.
-- Publish a private HTML view of the study with charts.
-
-## 5. Evidence standards
-- **Source hierarchy:** official docs and pricing pages, then independent benchmarks (e.g., Artificial Analysis), then peer-reviewed papers, then reputable press, then vendor marketing and blogs, then community posts.
-- **Vendor self-reported performance claims** (Jev or LLM vendors) are tagged `VENDOR` and capped at [Likely].
-- **Derived or assumed numbers** are tagged [Guessing] and carry a sensitivity range.
-- **Each headline claim records counter-evidence too.**
-
-## 6. Risks to the study
+## 8. Risks to the study
 | Risk | Mitigation |
 |---|---|
-| No API keys, so nothing can be benchmarked live | Published data plus a parametric model; a harness with mock mode the user can run with their own keys |
-| Jev launched today; claims unverified; limits change | Vendor flags; date-stamp everything; sensitivity analysis |
-| The scenario choice biases the result | Three secondary scenarios, including ones where Jev loses |
-| LLM pricing and models move fast (knowledge cutoff before today) | R3 pulls live pricing pages, with dates |
+| No API keys; Jev waitlist | Published data plus the parametric model. The lab and C1 measure what can be measured. The live path is clearly marked *untested* |
+| Comparator-driven misleading headline | Comparator ladder; overclaim grep in the Phase 4 gate |
+| Scope creep (13 architectures plus the lab) | Group architectures by family in the design docs, with per-architecture delta tables; lab timeboxed |
+| Lab numbers leaking into production claims | Provenance tags plus a leakage test |
+| Pricing and models move fast | Live pricing pages, dated |
+
+## 9. Disposition of the Phase 0 critic fixes
+| Fix | Disposition |
+|---|---|
+| 1 Comparator ladder | **Accepted** (§2, §0.3) |
+| 2 Capacity as a gating constraint | **Accepted** (§1 volume sweep, P4, Phase 2 requirements) |
+| 3 Capability matrix; LLM confidence method | **Accepted.** L2c uses logprobs where available, else self-consistency at k× cost. The Local Lab gives a real logprob path |
+| 4 Missing architectures | **Accepted.** Hypotheses are renamed P1–P6, and the critic's "H1 Jev-as-teacher" is renamed **D1** to avoid an ID clash. Voice is split into V-S2S and V-casc |
+| 5 Pre-registered hypotheses | **Accepted** (§3) |
+| 6 Unknown use case | **Accepted.** The user is asked once (non-blocking); defaults apply |
+| 7 Rework secondary scenarios | **Accepted** |
+| 8 Latency completeness | **Accepted.** India region added |
+| 9 Token and charge model | **Accepted** |
+| 10 Quality metrics | **Accepted** |
+| 11 Harness de-risking | **Accepted**, merged into the Local Lab (§6) |
+| 12 Process | **Accepted.** C1/L3/D1 move to a neutral A3; task list updated |
+| Phase 2 gate "full diagram per architecture" | **Modified.** One diagram per family, plus per-architecture delta tables (latency, tokens, failure modes). Reason: 13 diagrams would be scope creep with little interview value |
+| C1b measured | **Modified.** C1b (fine-tuned encoder) is estimated from the literature, not trained here. Reason: CPU time budget. C1a is measured |
+| LL1–LL8 | **Accepted** |
