@@ -5,45 +5,49 @@ Status: Phase 2 draft by agent A2, 2026-10-11. **Scope:** primary scenario P (ch
 **Conventions**
 - Every number cites a ledger row (`JEV-`, `LLM-`, `ECO-`), a section of `requirements.md` or `PLAN.md`, or carries **[Guessing]** with a range. JEV-105 to JEV-110 are Critic-1's new rows ("New rows to add" in `reviews/phase-1-factcheck-critic.md`), not yet merged into R1; where Critic-1 corrected a row (its V-numbers), the corrected value is used. **[LAB, illustrative]** marks numbers measured in `lab/` on CPU with public data, never production claims.
 - **Exact IDs:** Jev `jev-1.13.0`, pinned, never `jev-latest` (JEV-002). Generation (FR7): `claude-sonnet-5-5`, cached, the same tier and caching as the LLM way (R3 BoE, ECO-004); if A1 picks another generation model, swap it in both docs and the J-vs-L delta is unchanged. Fallback LLMs: `claude-haiku-5-5` with thinking disabled (LLM-026) or `gpt-6-luna` at effort `none` (LLM-037). L2d: OpenAI Decisions (`gpt-6-luna` via `/v1/decisions`, LLM-044) and `@cf/cloudflare/clef-flash` (LLM-085).
+- **Cross-doc basis** (lead; `design/neutral-architecture.md` §I): 7 decisions per message; Jev Call A at about 2,000 tokens, with 1,200 as the sensitivity case; generation fixed at $0.0038 per message for every family; p95 values are modelled in Phase 3 (M1), so this doc gives medians plus the assumptions behind any p95; thresholds sit on the Decision Service port's calibrated probability, never on Jev's raw `confidence`.
 - **Vendor multipliers are not used.** 193.6× / 444.6× are the vendor's own "higher end" figures with no named comparator; each fits a different plotted point (Sonnet 5 on time, Opus 5 on cost) (JEV-033, Critic-1 V09). 238× is a list-price ratio against `claude-fable-5-1` input (JEV-034, JEV-035).
 
 ## 0. Verdict
 
 | | J1: one Jev fan-out per message | J2: J1 plus a calibrated, confidence-gated cascade |
 |---|---|---|
-| What it is | One typed request answers FR1–FR6 over a filtered state. Code applies vendor-default gates. FR8 is a second small request per reply chunk | The same Jev calls, plus per-decision thresholds fitted on a labelled golden set, escalation to an LLM System 2, a human or code, and a permutation-agreement gate |
+| What it is | One typed request (Call A) answers FR1–FR6 over a filtered state; FR8 is a second small request per reply chunk. Code gates on the **port's probability**, with an identity calibration map at cold start, so only low-stakes actions are automated. Gates never use Jev's raw `confidence` field | The same Jev calls, plus per-decision calibration maps and thresholds fitted on a labelled golden set (on the port-calibrated p_max), escalation to an LLM System 2, a human or code, and a permutation-agreement gate |
 | Best at | Day-0 cold start. Typed probabilities with zero labels. Flat latency in question count (JEV-028) | Turning those distributions into controlled automation (risk–coverage), once labels exist |
 | Decision-path latency (NFR-1, p95 ≤ 300 ms) | Possible from US-West and US-East **only if** Jev's unpublished service p95 is ≤ about 200–274 ms (§3.1). Fails from the EU and India | Same, plus slow escalations. The p95 holds only if escalations stay below 5% or are rendered as fast deferrals (§4.3) |
-| $ per message (decisions + generation) | $0.0039–0.0040 at 1× Jev price. Decisions are 3.2–4.4% of the bill (§3.2) | Plus escalations. Human escalations dominate: 1% of messages adds $0.08–0.23 (ECO-077) |
-| Capacity at default limits | **Infeasible at every volume in the default configuration** (headroom 0.59–0.83 at 1M/day); about 1.0 in the lean configuration at 1M/day; 0.01–0.12 at 10M–50M/day (§3.3) | Same Jev load, plus LLM escalation load |
+| $ per message (decisions + generation) | $0.00388 on the cross-doc basis (Call A, 2,000 tokens; 1,200-token case $0.00385), and $0.00393–0.00396 with FR8 on Jev, at 1× price. Decisions are 1.3–4.0% of the bill (§3.2) | Plus escalations. Human escalations dominate: 1% of messages adds $0.08–0.23 (ECO-077) |
+| Capacity at default limits | Call A alone: 1.2× / 0.12× / 0.025× at 1M / 10M / 50M per day (requirements §5.2). **With FR8 on Jev (3 requests per message): 0.66× even at 1M/day**, so it is infeasible at every volume without negotiated limits (§3.3) | Same Jev load, plus LLM escalation load |
 | Ship it? | As a shadow and cold-start layer behind a Decision Service port | **Yes, in US regions**, behind the port, with C1/D1 taking high-volume intents and in-region backends serving the EU and India |
 
 ## 1. Family diagram (chat; J1 and J2)
 
-Legend: **thick arrows (`==>`) and thick-bordered nodes mark the critical path** to the first released token. Dotted arrows are fallback or off-path flows. The escalation branch is J2-only.
+Legend: **thick arrows (`==>`) and thick-bordered nodes mark the critical path** to the first released token. Dotted arrows are fallback or off-path flows. The escalation branch is J2-only. Backends are drawn as adapters behind A3's Decision Service port, using A3's names (J, L2d, L2, C1); see `design/neutral-architecture.md` §A.
 
 ```mermaid
 flowchart LR
   U(["User turn (chat)"]) ==> GW["Regional gateway<br/>US-West / US-East / EU / India"]
-  GW ==> PRE["Pre-Jev code, in-region<br/>language-ID gate, PII redaction,<br/>injection classifier, retrieve-and-filter"]
-  PRE -->|"non-English, image, long-history need"| LLMP["LLM decision path<br/>claude-haiku-5-5 / gpt-6-luna"]
+  GW ==> PRE["Pre-Jev code, in-region<br/>language-ID tag, PII redaction,<br/>retrieve-and-filter state"]
   PRE -.->|"speculative start, generic handler"| GEN
-  PRE ==> PORT{{"Decision Service port<br/>typed Choice / Score / Noul"}}
-  PORT ==>|"Request A: 1 fan-out, 13 questions<br/>FR1, FR2, FR3, FR4, FR5 extract, FR6"| JEV[("Jev jev-1.13.0<br/>us-west-2, US only")]
-  PORT -.->|"429 / 529 / timeout / breaker open"| FB["Fallback chain<br/>C1a in-region, then L2d, then L2, then safe default"]
-  JEV ==> CODE["Code layer<br/>permutation merge, FR5 date and amount rules,<br/>confidence gates"]
-  FB -.-> CODE
-  LLMP --> CODE
+  PRE ==> PORT{{"Decision Service port<br/>typed Choice / Score / Noul<br/>250 ms deadline, at most 1 retry"}}
+  PORT ==>|"Call A: 1 fan-out, 7 decisions as 13 questions<br/>FR1, FR2, FR3, FR4, FR5 extract, FR6"| JEV[("J adapter: jev-1.13.0<br/>us-west-2, US only")]
+  PORT ==>|"FR1 ensemble, in parallel"| C1B["C1b encoder, in-region<br/>injection, self-harm"]
+  PORT -->|"non-English, image, long history"| LLMP["L2 adapter<br/>claude-haiku-5-5 / gpt-6-luna"]
+  PORT -.->|"429 / 529 / timeout / breaker open"| FB["Fallback adapters<br/>C1, then L2d, then L2, then fail policy"]
+  JEV ==> CAL["Port: permutation merge,<br/>per-decision calibration map"]
+  C1B ==> CAL
+  LLMP --> CAL
+  FB -.-> CAL
+  CAL ==> CODE["Code layer<br/>FR5 date and amount rules,<br/>gates on calibrated probability"]
   CODE ==>|"route + action"| GEN["Generation FR7<br/>claude-sonnet-5-5, cached"]
   CODE -->|"J2: below threshold"| ESC{"J2 escalation target"}
   ESC --> S2["LLM System 2<br/>claude-sonnet-5-5"]
   ESC --> HUM["Human queue"]
   ESC --> DET["Deterministic handler<br/>or safe template"]
-  GEN ==>|"sentence chunks"| OG["Request B per chunk: FR8<br/>Jev 3 Nouls + PII regex"]
+  GEN ==>|"sentence chunks"| OG["Call B per chunk: FR8<br/>J 3 Nouls in parallel with C1b + PII regex"]
   OG ==> OUT(["First token released to client"])
-  JEV -.->|"FR9 decision log"| OBS[("Decision log, drift dashboards,<br/>golden set, recalibration")]
+  CAL -.->|"FR9 decision log"| OBS[("Decision log, drift dashboards,<br/>golden set, recalibration")]
   classDef cp stroke-width:4px
-  class GW,PRE,PORT,JEV,CODE,GEN,OG cp
+  class GW,PRE,PORT,JEV,C1B,CAL,CODE,GEN,OG cp
 ```
 
 ## 2. Request design
@@ -61,12 +65,12 @@ Numbers and dates are **deliberately absent** from the state. Code looks them up
 
 ### 2.2 Question map
 
-There is **one fan-out request per message** for the input side (Request A). FR8 needs Request B, because the reply does not exist yet when Request A is sent; that second call is unavoidable and applies to the LLM way too (§11). Questions point at state paths in backticks (for example `` `turn.text` ``), as the vendor's how-to recommends.
+The **7 decisions per message** (requirements §2: FR1, FR2, FR3, FR4, FR5, FR6, FR8) are asked as 13 questions in **one fan-out request per message** for the input side (Call A), plus 3 questions per FR8 chunk. FR8 needs Call B, because the reply does not exist yet when Call A is sent; that second call is unavoidable and applies to the LLM way too (A1 also models Call A + 2 FR8 calls; §11). Questions point at state paths in backticks (for example `` `turn.text` ``), as the vendor's how-to recommends.
 
 | Key | FR | Type | Options or levels | Net tokens | Consumer (the code branch that reads it) |
 |---|---|---|---|---|---|
-| `inj_attempt` | FR1 | Noul | P(yes) | ~57 (JEV-051) | Input guard: block and send the safe template |
-| `self_harm` | FR1 | Noul | P(yes) | ~57 | Crisis flow to a human |
+| `inj_attempt` | FR1 | Noul | P(yes) | ~57 (JEV-051) | Input guard, as an **ensemble with the in-region C1b encoder**: if either flags, block and send the safe template (A3 §A.3) |
+| `self_harm` | FR1 | Noul | P(yes) | ~57 | Crisis flow to a human (ensemble with C1b, as above) |
 | `abuse` | FR1 | Noul | P(yes) | ~57 | Tone-safe template |
 | `pii_present` | FR1 | Noul | P(yes) | ~57 | Audit of the in-region redaction (a second opinion only) |
 | `intent` | FR2 | Choice | 15–77 intents + `out_of_scope` + `other` (16–79 options; Choice cap 255, JEV-008) | ~315 at 16 options; ~1,420 at 78 [derived: ~17.8 tokens per option from the ~1,670-token 77-option request, JEV-030, JEV-051] | Router |
@@ -78,11 +82,11 @@ There is **one fan-out request per message** for the input side (Request A). FR8
 | `item_state` | FR5 extract | Choice | `unopened`, `used`, `damaged`, `not_stated` | 75–95 | Code policy table |
 | `next_action` | FR6 | Choice | The 8 values in `candidate_actions` | 75–95 | Orchestrator |
 | `next_action_r` | FR6 | Choice | Reversed order | 75–95 | Permutation merge |
-| `policy_violation`, `pii_leak`, `tone_violation` | FR8 (Request B) | Noul × 3 | P(yes) | 57–95 each | Hold or release the sentence |
+| `policy_violation`, `pii_leak`, `tone_violation` | FR8 (Call B) | Noul × 3 | P(yes) | 57–95 each | Hold or release the sentence. Runs in parallel with C1b in-process and PII regex; any signal holds the sentence (never a single-model guardrail) |
 
 ### 2.3 Option-order permutation (against the documented first-option bias, JEV-075)
 - **Every Choice gets a seeded random shuffle per request**, with the seed logged. This removes any *systematic* first-position advantage across traffic at zero token cost, and makes the position effect measurable from logs.
-- **Routing-critical Choices get a mirror.** FR2 (when ≤ 30 options) and FR6 carry a reversed-order copy in the *same* request; the merged distribution is the mean of the two (permutation averaging in the spirit of PriDe, LLM-074). If the copies disagree on the argmax, the decision is **unstable**: J2 escalates it and never auto-acts. Latency cost ≈ 0 (JEV-028); token cost about +315 (FR2 at 16 options) and +75–95 (FR6).
+- **Routing-critical Choices get a mirror.** FR2 (when ≤ 30 options) and FR6 carry a reversed-order copy in the *same* request; the port merges the two by averaging (permutation averaging in the spirit of PriDe, LLM-074) and only then applies its calibration map. If the copies disagree on the argmax, the decision is **unstable**: J2 escalates it and never auto-acts. Latency cost ≈ 0 (JEV-028); token cost about +315 (FR2 at 16 options) and +75–95 (FR6).
 - **Nouls and Scores are not permuted.** A Noul has no option order, and a Score's level order carries meaning (JEV-010, JEV-056).
 - **Taxonomies over 30 options get no intent mirror.** A zero-label, in-region embedding shortlist picks the top 10 intents plus `other`, and only the shortlist is mirrored [Guessing: shortlist recall@10 must be measured]. This also avoids the high-cardinality weakness behind Jev's last-of-17 on 77-way BANKING77 (JEV-087).
 - **Eval metric: permutation flip rate** on the golden set (PLAN §4). The lab already implements it (0.18–0.93 on qwen2.5-0.5b [LAB, illustrative]); no Jev flip rate has been published (JEV-075).
@@ -98,7 +102,7 @@ There is **one fan-out request per message** for the input side (Request A). FR8
 | Any `not_stated`, `ambiguous` or low-confidence field | Code | **Fail closed:** no automatic refund (requirements §4.1) |
 
 ### 2.5 Language-ID gate and other pre-Jev routing
-- **The gate:** an in-region CPU language-ID step runs before any decision call [Guessing: 1–5 ms]. English with p ≥ 0.9 [Guessing: 0.8–0.95] goes to Jev; Hindi, code-mixed and other languages go to the LLM decision path (structured outputs; in India, the in-region models of LLM-046 and LLM-053).
+- **The gate:** an in-region CPU language-ID step runs before any decision call [Guessing: 1–5 ms]. English with p ≥ 0.9 [Guessing: 0.8–0.95] goes to the J adapter; for Hindi, code-mixed and other languages the port routes to the L2 adapter (structured outputs; in India, the in-region models of LLM-046 and LLM-053).
 - **The gate stays until a per-language golden slice passes NFR-7 on Jev.** The vendor says other languages are "handled but not equally well" (JEV-013), and JevBench's Languages view has not been extracted (Critic-1 V61).
 - **Image attachments** go to a vision-LLM caption, then to Jev or the LLM path, because Jev takes text only (JEV-012).
 
@@ -111,18 +115,18 @@ There is **one fan-out request per message** for the input side (Request A). FR8
 
 | Row | J1 | J2 (delta from J1) |
 |---|---|---|
-| **Critical path** | gateway → pre-Jev code → Request A → code gates → generation (TTFT) → Request B on the first chunk → client | Same when confident. An escalated message adds an LLM System 2 call (first chunk 0.88 s at low effort, LLM-008), a human, or a fast deferral template |
+| **Critical path** | gateway → pre-Jev code → Call A → code gates → generation (TTFT) → Call B on the first chunk → client | Same when confident. An escalated message adds an LLM System 2 call (first chunk 0.88 s at low effort, LLM-008), a human, or a fast deferral template |
 | Calls per message | Jev: 1 (A) + 1–2 (B) = 2–3. LLM: 1 (generation) | Plus e_LLM × 1 LLM call, with e_LLM = 5–30% [Guessing] |
 | Per-hop latency | §3.1 | Unchanged for confident messages |
 | Token flow | §3.2. No caching on Jev (JEV-004); generation cached | Plus about 2–4K tokens per escalated LLM call [Guessing] |
 | $ per message | §3.2 | Plus e_LLM × $0.0016–0.004, plus e_human × $8–23 (§3.2) |
 | Rate-limit headroom | §3.3 | Same Jev load. LLM escalation needs `claude-sonnet-5-5` rate limits, which are not in the ledger [Guessing] |
 | Deadline / retry / fallback / fail mode | §3.4 | Escalation targets are listed in §4.2 |
-| Gate thresholds | Vendor defaults: confidence < 0.5 goes to a human; high-stakes actions need > 0.9 (JEV-059, JEV-060) | Fitted per decision on the golden set (§4.1) |
+| Gate thresholds | On the port's probability (merged p_max, or P(yes)) through an **identity** calibration map flagged `uncalibrated`. Conservative levels borrow the vendor's illustrative 0.5 / 0.9 examples (JEV-059, JEV-060), but are applied to probability, **never to Jev's `confidence` field**, which is a dispersion statistic (JEV-055, JEV-058). Money and safety actions are not automated | On the **port-calibrated** p_max: per-decision maps and τ fitted on the golden set (§4.1; A3 §A.5) |
 
-### 3.1 Per-hop latency by gateway region (Request A; 16-intent configuration)
+### 3.1 Per-hop latency by gateway region (Call A; 16-intent configuration)
 
-| Gateway | RTT to us-west-2 (P50) | Request A median | Modelled p95 | NFR-1 (p95 ≤ 300 ms) | Flip threshold: Jev service p95 must be ≤ | Design consequence |
+| Gateway | RTT to us-west-2 (P50) | Call A median | Illustrative p95 under the assumption below (M1 models the real one) | NFR-1 (p95 ≤ 300 ms) | Flip threshold: Jev service p95 must be ≤ | Design consequence |
 |---|---|---|---|---|---|---|
 | US-West | 1–9 ms (ECO-073) | 0.10–0.25 s | 0.20–0.73 s | **Undecided.** Passes only with a light tail | ~274 ms | Jev on the critical path |
 | US-East | 69–71 ms (ECO-069, ECO-072) | 0.17–0.31 s | 0.28–0.81 s | Borderline to failing | ~200 ms | Jev on path only if a live probe shows service p95 ≤ 200 ms; otherwise the in-region fallback answers first |
@@ -131,7 +135,7 @@ There is **one fan-out request per message** for the input side (Request A). FR8
 
 - **Inputs:** Jev service median 0.10–0.24 s (JEV-028, JEV-031); 0.39 s for a 78-option Choice via OpenRouter (JEV-030), so the 77-intent configuration fails NFR-1 everywhere unless the §2.3 shortlist is used.
 - **Modelled p95 assumption:** service p95 = 2–3× the median [Guessing]; RTT p95 = 1.2× P50 [Guessing: 1.1–1.5×]; gateway plus code = 15 ms [Guessing: 5–25 ms]; no last mile (ECO-066). No p95 exists for Jev or any LLM decision path (LLM-018; ledger "Known gaps"). The probe locations behind the medians are unstated, so adding RTT is conservative. M1's Monte Carlo replaces this table.
-- **Chat TTFT (NFR-2, p95 ≤ 1.0 s):** with speculative generation, Request A overlaps the generation TTFT (0.48–0.88 s, LLM-007, LLM-011, LLM-008), but Request B on the first sentence adds 0.10–0.25 s *serially* in US-West, so the first sentence must be short. NFR-4 (≤ 150 ms for FR8) holds only if the service p95 is ≤ about 140 ms, close to the vendor's "about 100 ms for most queries" (JEV-023), which is unproven at p95.
+- **Chat TTFT (NFR-2, p95 ≤ 1.0 s):** with speculative generation, Call A overlaps the generation TTFT (0.48–0.88 s, LLM-007, LLM-011, LLM-008), but Call B on the first sentence adds 0.10–0.25 s *serially* in US-West, so the first sentence must be short. NFR-4 (≤ 150 ms for FR8) holds only if the service p95 is ≤ about 140 ms, close to the vendor's "about 100 ms for most queries" (JEV-023), which is unproven at p95.
 
 ### 3.2 Token flow and $ per message (Jev $0.042/MTok input, JEV-003; generation $0.0038, R3 BoE via ECO-004)
 
@@ -143,33 +147,35 @@ There is **one fan-out request per message** for the input side (Request A). FR8
 | FR2 intent: 16 options / 78 options | ~315 / ~1,420 | derived from JEV-030 and JEV-051 |
 | FR3, FR4, FR5 × 3, FR6: 6 rubric questions | 6 × 75–95 = 450–570 | JEV-051 as corrected by Critic-1 V43 |
 | Mirrors (FR2 at 16 options, and FR6) | +315 and +75–95 | §2.3 |
-| **Request B per FR8 chunk** (overhead + 100–300 tokens of state [Guessing] + 3 Nouls) | 521–885 | as above |
+| **Call B per FR8 chunk** (overhead + 100–300 tokens of state [Guessing] + 3 Nouls) | 521–885 | as above |
 | Caching | **None on Jev.** The state and rubric are re-billed on every request (JEV-004). Generation: 3,000 cached + 500 uncached input, 250 output | R3 BoE |
 
-All rows below are derived: tokens from the component table × $0.042/MTok (JEV-003) × the 1×/3×/10× price sweep (PLAN §4), plus $0.0038 generation (R3 BoE).
+All rows below are derived: tokens × $0.042/MTok (JEV-003) × the 1×/3×/10× price sweep (PLAN §4), plus **generation fixed at $0.0038 for every family**. That figure matches this doc's own derivation on `claude-sonnet-5-5`: 3,000 cached × $0.10 + 500 uncached × $2 + 250 output × $10 per MTok = $0.0038 (ECO-004, R3 BoE).
 
-| Configuration | Requests per msg | Tokens per msg | Decisions only, at 1× / 3× / 10× Jev price | Decisions + generation, at 1× / 3× / 10× | Decision share at 1× |
+| Basis | Requests per msg | Tokens per msg | Decisions only, at 1× / 3× / 10× Jev price | Decisions + generation, at 1× / 3× / 10× | Decision share at 1× |
 |---|---|---|---|---|---|
-| Lean: 16 intents, no mirrors, FR8 in 1 chunk | 2 | 2,064–2,898 | $0.000087–0.000122 / $0.00026–0.00037 / $0.00087–0.0012 | $0.0039 / $0.0041–0.0042 / $0.0047–0.0050 | 2.2–3.1% |
-| **Default:** 16 intents, both mirrors, FR8 in 2 chunks | 3 | 2,975–4,193 | $0.000125–0.000176 / $0.00038–0.00053 / $0.0012–0.0018 | $0.0039–0.0040 / $0.0042–0.0043 / $0.0051–0.0056 | 3.2–4.4% |
-| 77 intents, FR6 mirror only, FR8 in 2 chunks | 3 | 3,763–4,981 | $0.000158–0.000209 / $0.00047–0.00063 / $0.0016–0.0021 | $0.0040 / $0.0043–0.0044 / $0.0054–0.0059 | 4.0–5.2% |
+| **Cross-doc headline:** Call A only, 7 decisions, 2,000 tokens (conservative) | 1 | 2,000 | $0.000084 / $0.00025 / $0.00084 | $0.00388 / $0.00405 / $0.00464 | 2.2% |
+| Cross-doc sensitivity: Call A at 1,200 tokens | 1 | 1,200 | $0.000050 / $0.00015 / $0.00050 | $0.00385 / $0.00395 / $0.00430 | 1.3% |
+| **Cross-doc + FR8 on Jev** (2 Call B chunks, as A1 models for L2) | 3 | 3,042–3,770 (2,242–2,970 at 1,200) | $0.000128–0.000158 / $0.00038–0.00048 / $0.0013–0.0016 | $0.00393–0.00396 / $0.00418–0.00428 / $0.00508–0.00538 | 3.3–4.0% |
+| Check, as designed here: 16 intents, both mirrors, 2 FR8 chunks | 3 | 2,975–4,193 | $0.000125–0.000176 / $0.00038–0.00053 / $0.0012–0.0018 | $0.0039–0.0040 / $0.0042–0.0043 / $0.0051–0.0056 | 3.2–4.4% |
+| Check, as designed: 77 intents, FR6 mirror only, 2 FR8 chunks | 3 | 3,763–4,981 | $0.000158–0.000209 / $0.00047–0.00063 / $0.0016–0.0021 | $0.0040 / $0.0043–0.0044 / $0.0054–0.0059 | 4.0–5.2% |
 
-- **Cross-check:** the vendor's own Customer Service workflow uses 2.1K–4.1K tokens and $0.000087–0.000172 per case (JEV-047), matching the default row. R3's single-call BoE ($0.000084 at 2,000 tokens) and Critic-1's ~1,100–1,250-token estimate counted 7 questions in one call; this design counts 13 + 3 questions plus the unavoidable FR8 call.
-- **Reference rungs** (R3's single-call basis): cached `claude-haiku-5-5` $0.000091 (ECO-001); cached `gpt-6-luna` $0.000077 (ECO-013); Clef-flash $0.000076 and OpenAI Decisions $0.00020 (ECO-091); cached `claude-sonnet-5-5` decisions $0.0016 (R3 L2m row). **Jev's price edge is real only against the mid tier and above** (about 19×); against the small tier there is none.
+- **Why the cross-doc envelope holds:** this design's Call A is 1,543–2,013 tokens without mirrors and 1,933–2,423 with them (component table), which brackets the 2,000-token envelope. The 1,200 case is Critic-1's ~1,100–1,250-token estimate for 7 short questions. The vendor's own Customer Service workflow uses 2.1K–4.1K tokens and $0.000087–0.000172 per case (JEV-047), consistent with the "+ FR8" rows.
+- **Reference rungs** (R3's single-call basis): L2 cached `claude-haiku-5-5` $0.000091 (ECO-001) and cached `gpt-6-luna` $0.000077 (ECO-013); L2d (hosted decision APIs, not the LLM baseline) Clef-flash $0.000076 and OpenAI Decisions $0.00020 (ECO-091); L2m cached `claude-sonnet-5-5` decisions $0.0016 (R3 L2m row). **Jev's price edge is real only against the mid tier and above** (about 19×); against the small tier there is none.
 - **J2 adds** e_LLM × $0.0016–0.004 (the floor is the Sonnet 5.5 cached decision cost, ECO-004; the extra is reasoning tokens [Guessing]), i.e. +$0.00008–0.0012 at e_LLM = 5–30%. It also adds **e_human × $8–23 (ECO-077)**: at 1% of messages that is +$0.08–0.23 per message, **20–60× the entire J1 bill**. Coverage, not token price, is J2's cost lever.
 
 ### 3.3 Rate-limit headroom (defaults 80 req/s and 100K tok/s, JEV-005, JEV-006; peaks from requirements §5)
 
 All rows are derived: peak msg/s (requirements §5) × requests and tokens per message (§3.2), against 80 req/s and 100K tok/s (JEV-005, JEV-006).
 
-| Volume | Peak msg/s | Lean: req/s → headroom | Lean: tok/s → headroom | Default: req/s → headroom | Default: tok/s → headroom | Default config needs this multiple of the default limits (1.5× burst margin) |
-|---|---|---|---|---|---|---|
-| 1M/day | 40.5 | 81 → **0.99** | 84–117K → 0.85–1.20 | 122 → **0.66** | 120–170K → 0.59–0.83 | ~2× requests, ~3× tokens |
-| 10M/day | 405 | 810 → 0.10 | 0.84–1.17M → 0.09–0.12 | 1,215 → 0.066 | 1.21–1.70M → 0.06–0.08 | ~23× requests, ~25× tokens |
-| 50M/day | 2,025 | 4,050 → 0.020 | 4.2–5.9M → 0.017–0.024 | 6,075 → 0.013 | 6.0–8.5M → 0.012–0.017 | ~114× requests, ~127× tokens |
+| Volume | Peak msg/s | Call A only, 2,000 tok (1 req/msg): binding headroom | Call A only, 1,200 tok: binding headroom | **Call A + 2 FR8 calls** (3 req/msg; 3,042–3,770 tok): binding headroom | Multiple of default limits needed for the 3-request case (1.5× burst margin) |
+|---|---|---|---|---|---|
+| 1M/day | 40.5 | **1.2×** (tokens) | 2.0× (requests) | **0.66×** (requests and tokens) | ~2.3× |
+| 10M/day | 405 | 0.12× | 0.20× | 0.066× | ~23× |
+| 50M/day | 2,025 | 0.025× | 0.040× | 0.013× | ~114× |
 
 **Reading the table**
-- **Requests bind as tightly as tokens** once FR8 runs on Jev (2–3 requests per message against 80 req/s). Requirements §5.2 assumed one call per message and showed 1.2× at 1M/day; with a realistic call count, **even 1M/day is infeasible at default limits** (lean ≈ 1.0, below the 1.5 burst margin).
+- The Call-A-only columns reproduce requirements §5.2 (1.2× / 0.12× / 0.025×). **Once FR8 runs on Jev, requests bind as tightly as tokens** (3 requests per message against 80 req/s), and **even 1M/day is infeasible at default limits.** One FR8 chunk (2 requests per message) gives 0.99× at 1M/day, still below the 1.5 burst margin. This design's own configurations land in the same place (0.59–0.83× at 1M/day; derived).
 - **Enterprise limits are unknown** [Guessing: assume 5–50× default is negotiable]. The vendor says only that "higher limits are available" (JEV-005), and its help centre adds that "a higher rate limit is not a guaranteed fix for overload" (JEV-005). 529 means vendor-side overload, which no limit increase removes (JEV-102).
 - **Scale check:** 50M/day × 3 requests is about **1.05B requests a week, about the same as all Jev traffic on OpenRouter (1.03B a week, JEV-107).**
 - **Connection pool:** by Little's law, 2,025 msg/s × 3 requests × 0.25 s ≈ 1,500 requests in flight, against an SDK pool default of 100 connections (JEV-100).
@@ -179,23 +185,23 @@ All rows are derived: peak msg/s (requirements §5) × requests and tokens per m
 ### 3.4 Deadlines, retries, fallbacks, fail-open/closed
 
 **Client settings**, overriding the SDK defaults of a 10 s timeout, 2 retries with 0.5–5 s backoff and a 30 s budget (JEV-098, JEV-099):
-- Per-call timeout 250 ms in US regions (NFR-6). **0 retries on the critical path**; one retry only if the remaining deadline is at least the observed p50 + 20 ms [Guessing].
-- Never retry a 429 or 529 on the path: fall back immediately and do not stack retry loops (JEV-102). Honour `retry-after` only off-path. Hedge Request A after p90 only when request headroom is ≥ 1.5. HTTP/2 with pre-warmed pools (JEV-100).
-- Circuit breaker opens at > 5% [Guessing: 2–10%] timeouts, 429s or 529s over 10 s; half-open with 1% probe traffic.
+- **250 ms per-call deadline (NFR-6), at most 1 retry**, owned by the port, and only if the remaining deadline is at least the backend's p50 × 1.5 [Guessing: 1.2–2×] (A3 §A.6). Jev SDK retries are off (`timeout=0.25`, `max_retries=0`).
+- Never retry a 429 or 529 on the path: fall back immediately and do not stack retry loops (JEV-102). Honour `retry-after` only off-path. **Hedge to the next adapter in the chain** (C1 or L2d) after the primary's p90 (requirements §5.3), not with a duplicate Jev call, so hedging does not eat Jev's rate limit. HTTP/2 with pre-warmed pools (JEV-100).
+- The circuit breaker (per backend × region × decision type) opens when timeouts, 5xx, 429s and 529s reach ≥ 5% over 30 s; a 529 opens it immediately. Half-open with 1% probes after 30 s [Guessing: all thresholds ±2×] (A3 §A.6).
 
-| Decision | Deadline (NFR-6: 250 ms per call; NFR-4: 150 ms for FR8) | Fallback chain on 429 / 529 / timeout / breaker open | Fail mode (requirements §4.1) |
+| Decision | Deadline (250 ms per call, NFR-6; FR8 p95 target 150 ms, NFR-4) | Fallback chain on 429 / 529 / timeout / breaker open | Fail mode (requirements §4.1) |
 |---|---|---|---|
-| FR1 injection, self-harm | A: 250 ms | The in-region injection classifier always runs. If uncertain, send the safe template or a human | **Closed** |
-| FR1 abuse | A: 250 ms | Classifier, then the tone-safe template | Closed (template) |
+| FR1 injection, self-harm | Call A: 250 ms | **Ensemble C1b ∥ J** (either flags → block). If J fails, C1b alone at a stricter τ, then the safe template or a human | **Closed** |
+| FR1 abuse | Call A: 250 ms | C1b, then the tone-safe template | Closed (template) |
 | FR1 PII | — | In-region regex/NER runs *before* Jev anyway | Open (redact downstream) |
-| FR2 intent | A: 250 ms | C1a in-region, then L2d (OpenAI Decisions has EU processing, LLM-044), then L2, then the generic LLM handler | Fallback chain |
-| FR3 urgency | Off-path, 2 s, 2 retries | Default priority | Open |
-| FR4 needs a human | A: 250 ms | C1, then offer a human | **Closed** |
-| FR5 extraction and eligibility | A: 250 ms | A UI list where the user picks the order. No automatic refund | **Closed** |
-| FR6 next action | A: 250 ms | L2d or L2, then the default `ask_clarifying` | Open (default action) |
-| FR8 output | B: 150 ms (NFR-4) | Regex PII plus an L2 check off-path. Hold the sentence | **Closed** (safe phrase) |
+| FR2 intent | Call A: 250 ms | C1a in-region, then L2d (OpenAI Decisions has EU processing, LLM-044), then L2, then the generic LLM handler | Fallback chain |
+| FR3 urgency | Inside Call A: 250 ms | Default priority | Open |
+| FR4 needs a human | Call A: 250 ms | C1, then offer a human | **Closed** |
+| FR5 extraction and eligibility | Call A: 250 ms | A UI list where the user picks the order. No automatic refund | **Closed** |
+| FR6 next action | Call A: 250 ms | L2d or L2, then the default `ask_clarifying` | Open (default action) |
+| FR8 output | Call B: 250 ms | **C1b in-process ∥ J**, plus PII regex; if J fails, C1b alone at a stricter τ; an L2 check runs off-path. Hold the sentence | **Closed** (safe phrase) |
 
-**EU and India gateways:** the on-path rows use in-region backends first (C1a/C1b, or a self-hosted open-weight decision model, ECO-090). Jev runs off-path for cold-start intents only, with an advisory deadline of 600 ms [Guessing: 400–800 ms].
+**EU and India gateways:** the on-path rows use in-region adapters first (C1a/C1b, or a self-hosted open-weight decision model, ECO-090). Jev is not called on their real-time path; it serves cold-start intents and D1 labelling asynchronously (at most 1 retry, no real-time deadline).
 
 ## 4. J2: the confidence-gated cascade
 
@@ -203,31 +209,33 @@ All rows are derived: peak msg/s (requirements §5) × requests and tokens per m
 
 | Stage | Thresholds | Evidence |
 |---|---|---|
-| Day 0, no labels | Conservative vendor defaults: confidence < 0.5 goes to a human; high-stakes actions need ≥ 0.9; a Noul between 0.30 and 0.70 counts as uncertain. Run in shadow mode or with human confirmation | JEV-057, JEV-059, JEV-060 |
+| Day 0, no labels | The port's calibration map is the identity, flagged `uncalibrated`. Conservative gates on the port's probability: merged p_max < 0.5 goes to a human, high-stakes actions need ≥ 0.9, and a Noul between 0.30 and 0.70 counts as uncertain (levels borrowed from the vendor's examples). **Never Jev's `confidence` field**, which measures dispersion, not P(correct). Run in shadow mode or with human confirmation | JEV-055, JEV-057, JEV-059, JEV-060 |
 | Why day 0 cannot automate | Calibration depends on the task: ECE 0.011 on claims vs 0.108 on LegalBench; 3.5% on BoolQ; 0.138 on BANKING77, overconfident by 12 points | JEV-083, JEV-084, JEV-087 |
 | Weeks 1–4: golden set | Labels come from shadow traffic plus human resolution of escalations (the cascade produces its own labels). Size: ≥ ~750 positives per safety class, to pin recall 0.98 to ±0.01 at 95% [Guessing: binomial derivation]; 50–100 per intent [Guessing] | NFR-7 |
-| Fit | Per decision: temperature scaling or isotonic regression on a calibration split (LLM-076). On a held-out split, choose τ so the **upper** 95% bound on error meets the target. Vals' frozen threshold for a 1% error budget actually produced 1.6% | JEV-083 |
+| Fit | Per decision, the port fits a calibration map (keyed by backend × pinned version × decision type, A3 §A.5): temperature scaling for Choice/Score, Platt or isotonic for Noul (LLM-076). On a held-out split, choose τ on the **calibrated** p_max so the **upper** 95% bound on error meets the target. Vals' frozen threshold for a 1% error budget actually produced 1.6% | JEV-083 |
 | Go-live check | ECE ≤ 0.05 with equal-mass bins (NFR-8), and NFR-7 met on the risk–coverage curve | requirements §4 |
 
 **What "no labels" buys: cold start, not automation.** On day 0 Jev returns ordered, roughly calibrated distributions with no labelled data: AUROC 0.811 on BANKING77 (JEV-087), median AUROC 0.886 across 44 alignment benchmarks (JEV-093). That is enough to rank decisions and send the uncertain tail to humans, which is how the first labels get made. It is **not** enough for thresholds you can trust for automation; those need labels on every rung (LLM logprobs need recalibration after RLHF, LLM-071; C1a's ECE falls from 0.144 to 0.012 at N = 50 after temperature scaling [LAB, illustrative]). The edge is a **cold-start and taxonomy-churn edge**, worth most when intents change monthly (requirements Q7).
 
 ### 4.2 Escalation target per decision
+All gate signals are the port's **calibrated** probabilities (A3 §A.1, §A.5).
+
 | Decision | Gate signal | Escalated to | Why that target |
 |---|---|---|---|
-| FR1 injection | Jev P(yes) **and** the in-region classifier | **Code:** safe template; fail closed. An LLM second check runs off-path | Jev must never be the only control (JEV-073, JEV-106) |
-| FR1 self-harm | P(yes) ≥ a recall-tuned τ [Guessing: 0.2–0.35] | **Human** (crisis protocol) plus a template | The cost of a miss is asymmetric |
-| FR2 intent | Merged p_max, mirror agreement, top-two ratio | **LLM System 2** (`claude-sonnet-5-5` at effort low, with the intent rubric and history), or a clarifying question from a code template | Ambiguity needs reasoning or the user's input |
-| FR4 needs a human | P(yes) in or above the uncertain band | **Human** | Fail closed |
-| FR5 extraction | Any field `not_stated`, `ambiguous` or low-confidence | **Code** (the UI pick list), then a human for disputes | Money moves only on facts that code has verified |
+| FR1 injection | Calibrated J P(yes) **and** C1b (ensemble; either flags) | **Code:** safe template; fail closed. An LLM second check runs off-path | Never a single-model guardrail (JEV-073, JEV-105, JEV-106) |
+| FR1 self-harm | Calibrated P(yes) ≥ a recall-tuned τ [Guessing: 0.2–0.35], J ∥ C1b | **Human** (crisis protocol) plus a template | The cost of a miss is asymmetric |
+| FR2 intent | Calibrated merged p_max, mirror agreement, top-two margin | **LLM System 2** (`claude-sonnet-5-5` at effort low, with the intent rubric and history), or a clarifying question from a code template | Ambiguity needs reasoning or the user's input |
+| FR4 needs a human | Calibrated P(yes) in or above the uncertain band | **Human** | Fail closed |
+| FR5 extraction | Any field `not_stated` or `ambiguous`, or calibrated p_max < τ | **Code** (the UI pick list), then a human for disputes | Money moves only on facts that code has verified |
 | FR5 eligibility exception | A rule needs judgement (a multi-hop exception) | **LLM System 2** proposes; a human approves above the refund cap | Indirection (JEV-071) |
-| FR6 next action | Merged confidence below τ_action, set by stakes | **LLM System 2**, or the default `ask_clarifying` | Thresholds scale with risk (JEV-059) |
-| FR8 output | max P(violation) ≥ τ | **Code:** hold and use the safe phrase. LLM rewrite off-path | Fail closed |
+| FR6 next action | Calibrated merged p_max below τ_action, set by stakes | **LLM System 2**, or the default `ask_clarifying` | Thresholds scale with risk (JEV-059) |
+| FR8 output | Calibrated max P(violation) ≥ τ on J, or any C1b / regex signal | **Code:** hold and use the safe phrase. LLM rewrite off-path | Fail closed |
 | FR3 urgency | — | None (fail open) | Low stakes |
 
 ### 4.3 Risk–coverage framing
 - **Per decision, plot selective risk r(τ) against coverage c(τ).** The operating point must meet NFR-7 (≥ 97% accurate at ≥ 70% automation); report AURC and compare J2, L2c and C1a at equal coverage (M1's cascade simulation).
 - **Evidence on the curve's shape:** a p_max ≥ 0.60 gate gives 99.2% agreement with 74.2% automated (JEV-067); on SIC codes a 0.9 cutoff split filings in half, 90% right vs 40% (JEV-066, n = 60); Vals saw 95% coverage at 1.6% realised error (JEV-083).
-- **Latency interplay.** Escalations are slow (0.88 s to the first chunk, LLM-008). If more than 5% of messages escalate, the decision-path **p95 is the escalation path**; above 1%, the p99 (600 ms) breaks. So J2 needs e < 5% / 1%, **or** each escalation is rendered as a fast deferral (a clarifying question or a "checking that for you" template inside the 300 ms path) while System 2 runs.
+- **Latency interplay.** Escalations are slow (0.88 s to the first chunk, LLM-008). If more than 5% of messages escalate, the decision-path **p95 is the escalation path**; above 1%, the p99 (600 ms, NFR-1) breaks. So J2 needs e < 5% / 1%, **or** each escalation is rendered as a fast deferral (a clarifying question or a "checking that for you" template inside the 300 ms path) while System 2 runs.
 - **Economics:** each point of coverage moved to humans costs $0.08–0.23 per message (ECO-077). Optimise coverage first, token price last.
 
 ### 4.4 Version pinning and recalibration
@@ -244,16 +252,16 @@ All rows are derived: peak msg/s (requirements §5) × requests and tokens per m
 | Marginal $ per message | $0.0000024–0.0000040 at 1× | derived from JEV-003 |
 | One extra question at 50M messages/day | $44K–73K/yr at 1×; $437K–728K/yr at 10× | derived |
 | Peak tokens/s for one extra question at 50M/day | 115K–192K, **more than the whole default limit** | derived from JEV-005 |
-| P6 check: decision share of the bill at k = 5 (5× speculative questions in Request A) | 9–10% at 1×; 22–25% at 3×; **48–53% at 10×** (P6 falsified) | derived; PLAN §3 |
+| P6 check: decision share of the bill at k = 5 (Call A's question tokens × 5, on the 1,200 / 2,000-token basis with ~280 overhead + ~300 state) | 4–8% at 1×; 11–20% at 3×; **29–46% at 10×** (P6 falsified at 10×) | derived; PLAN §3 |
 
 Latency does not police fan-out: adding questions is nearly free in time. **Budgets and capacity have to do it instead.**
 
 **Governance rules**
 1. **Every question needs a consumer.** A code-owned question registry records each question's key, FR, owner, consuming code branch, metric, expiry date and rubric hash. CI fails any question that no code reads.
-2. **Decision budget.** Request A is capped at ≤ 16 questions and ≤ 2,500 input tokens [Guessing: 2,000–3,000]. FR8 gets ≤ 2 calls per chat reply. The port enforces the caps, and over-budget changes fail in CI rather than at runtime.
+2. **Decision budget.** Call A is capped at ≤ 16 questions and ≤ 2,500 input tokens [Guessing: 2,000–3,000]. FR8 gets ≤ 2 calls per chat reply. The port enforces the caps, and over-budget changes fail in CI rather than at runtime.
 3. **Consumer hit-rate.** Log whether each answer changed a branch. Prune questions with < 1% decision impact over 30 days [Guessing].
 4. **Alarms:** decision spend above 10% of the per-message bill [Guessing: 5–25%; P6's line is 25%], or token headroom below 1.5.
-5. **Speculation only inside Request A**, never as extra requests. A new question ships like a feature: it needs a golden-set slice and a threshold before anything consumes it.
+5. **Speculation only inside Call A**, never as extra requests. A new question ships like a feature: it needs a golden-set slice and a threshold before anything consumes it.
 
 ## 6. Failure modes
 
@@ -269,19 +277,19 @@ Latency does not police fan-out: adding questions is nearly free in time. **Budg
 | 8 | Choice option order | JEV-075 | FR2, FR5, FR6 | Shuffle, mirror and flip-rate metric (§2.3) | Low–medium |
 | 9 | Generation | JEV-076 | FR7 | An LLM always generates | None |
 | 10 | **JevOut context redirection** | Natural additions with a median of 31 words flip **61.4–73.2%** of correct decisions to a chosen wrong option, across 4 decision systems including Jev, and transfer between models (JEV-106) | Retrieved notes, order comments, the user's own text | Only the current turn and our own summary enter the state; money and safety actions need code-verified facts; on 1% of FR4/FR6 traffic, re-ask on a current-turn-only state and escalate on disagreement [Guessing: 1%]; a JevOut-style eval slice | **High.** No fix exists, and it also hits L2d and LLMs |
-| 11 | Prompt injection into Jev as the guardrail | JEV-073. Cisco: a fine-tuned 1B encoder beats Jev at 0.5% FPR (recall 61% vs 34%) (JEV-105) | FR1, FR8 | An in-region encoder classifier is the **primary** injection control and Jev the second signal; the generation LLM gets least-privilege tools; fail closed. **Never the only control** | Medium |
+| 11 | Prompt injection into Jev as the guardrail | JEV-073. Cisco: a fine-tuned 1B encoder beats Jev at 0.5% FPR (recall 61% vs 34%) (JEV-105) | FR1, FR8 | **Ensemble C1b ∥ J** (A3 §A.3): the in-region encoder and Jev both vote, and either one flagging blocks; the generation LLM gets least-privilege tools; fail closed. **No single-model guardrail** | Medium |
 | 12 | 32k state limit | JEV-007. JevBench excluded long items | Long histories | Never send history; an oversize request (422) goes to the LLM path | Low |
 | 13 | US-only processing; no SLA | JEV-015, JEV-016, JEV-018. Status page reads 99.838%, an operator figure over an undefined window (JEV-017) | NFR-5 (99.9%), EU, India | The port and its fallbacks meet NFR-5, not Jev; ask for a contractual SLA | Medium |
 | 14 | Dynamic limits and 529 overload | JEV-005, JEV-102 | Peaks | Circuit breaker; spill to C1 or L2d; negotiated limits | **High** above 1M/day |
-| 15 | A four-week-old vendor in a crowded category | Launched 2026-09-15 (JEV-021). Rivals: OpenAI Decisions, Clef/Clef-flash, Microsoft-Decision-1, Liquid d1 (JEV-089, JEV-108–110) | Lock-in, roadmap | The port; contract tests; L2d shadowed on 1% of traffic; exit by config change. d1 already serves the same `/v1/systemone` schema (JEV-110) | Medium |
-| 16 | Price subsidy | "We can't prove it isn't subsidized" (JEV-003) | Bill | Plan at 1× / 3× / 10×: decisions are 3–4% / 9–12% / 25–32% of the bill (§3.2) | Low (bill); medium (P6) |
-| 17 | Non-determinism | Choice plurality agreement 90.8% (JEV-067) | Audit replays | Gate on p_max; log the answer, never re-derive it | Low |
+| 15 | A four-week-old vendor in a crowded category | Launched 2026-09-15 (JEV-021). L2d rivals: OpenAI Decisions, Clef/Clef-flash, Microsoft-Decision-1, Liquid d1 (JEV-089, JEV-108–110) | Lock-in, roadmap | The port; contract tests; L2d shadowed on 1% of traffic; exit by config change. d1 already serves the same `/v1/systemone` schema (JEV-110) | Medium |
+| 16 | Price subsidy | "We can't prove it isn't subsidized" (JEV-003) | Bill | Plan at 1× / 3× / 10×: decisions are 2.2% / 6.2% / 18.1% of the bill for Call A alone, and 3–4% / 9–11% / 25–29% with FR8 on Jev (§3.2) | Low (bill); medium (P6) |
+| 17 | Non-determinism | Choice plurality agreement 90.8% (JEV-067) | Audit replays | Gate on the calibrated p_max; log the answer, never re-derive it | Low |
 | 18 | SDK defaults and alias drift | JEV-098, JEV-099, JEV-002 | Tail latency, silent model change | §3.4 overrides; pinning (§4.4) | Low once fixed |
 | 19 | Task-dependent quality | Last of 17 on BANKING77 (JEV-087). 67.8% vs `gpt-5.6-sol` 74.1% on the vendor's own workflows (JEV-042) | FR2 at high cardinality | Shortlist; J2 escalation; D1 for high-volume intents | Medium |
 
 ## 7. Observability, evaluation and rollout
 
-- **Per-decision log (FR9, NFR-12):** request ID, region, the response `model` field, question key and rubric hash, option-order seed, full probabilities, confidence, mirror agreement, client-side latency, `usage` tokens, cost, backend used (Jev or a fallback), gate outcome, escalation target.
+- **Per-decision log (FR9, NFR-12):** request ID, region, the response `model` field, question key and rubric hash, option-order seed, raw and calibrated probabilities (Jev's `confidence` is logged for reference only), calibration-map version, mirror agreement, client-side latency, `usage` tokens, cost, backend used (Jev or a fallback), gate outcome, escalation target.
 - **Dashboards:** p50/p95/p99 per region and request type (A or B); 429/529/timeout and breaker-trip rates; request and token headroom against the limits; confidence-distribution drift (PSI per decision); permutation disagreement rate; coverage and escalation rate per decision; consumer hit-rate; decision spend share.
 - **Alerts:** safety recall < 0.98 on the rolling labelled sample (NFR-7), p95 > 300 ms (NFR-1), headroom < 1.5 (requirements §5), or a mismatch on the `model` field.
 
@@ -307,9 +315,9 @@ Latency does not police fan-out: adding questions is nearly free in time. **Budg
 
 ## 9. Voice: how Jev slots into V-casc (A1's doc owns the full pipeline)
 
-- **FR8 per sentence:** Request B carries 3 Nouls (2 if PII leak detection moves to code). Only the **first** sentence sits on the critical path; sentence n+1 is checked while TTS speaks sentence n. NFR-4 (≤ 150 ms) holds only from US-West and only if the service p95 is ≤ about 140 ms (§3.1); TTS then adds 128–197 ms (LLM-060).
-- **Input fan-out on the eager end-of-turn transcript:** Request A fires speculatively on the eager partial (Deepgram `eager_eot_threshold`, LLM-056), in parallel with LLM generation, and re-runs only if the final transcript changes. In voice, decisions are not the bottleneck; endpointing and LLM TTFT are (requirements §6.4).
-- **Rate limits and region:** per-sentence calls multiply requests, so after the first sentence batch 2–3 sentences per Request B [Guessing]. Outside the US the voice guardrail runs on in-region backends, as in §8.
+- **FR8 per sentence:** Call B carries 3 Nouls (2 if PII leak detection moves to code). Only the **first** sentence sits on the critical path; sentence n+1 is checked while TTS speaks sentence n. NFR-4 (≤ 150 ms) holds only from US-West and only if the service p95 is ≤ about 140 ms (§3.1); TTS then adds 128–197 ms (LLM-060).
+- **Input fan-out on the eager end-of-turn transcript:** Call A fires speculatively on the eager partial (Deepgram `eager_eot_threshold`, LLM-056), in parallel with LLM generation, and re-runs only if the final transcript changes. In voice, decisions are not the bottleneck; endpointing and LLM TTFT are (requirements §6.4).
+- **Rate limits and region:** per-sentence calls multiply requests, so after the first sentence batch 2–3 sentences per Call B [Guessing]. Outside the US the voice guardrail runs on in-region backends, as in §8.
 
 ## 10. Where the Jev way genuinely wins, and where it loses
 
@@ -337,10 +345,14 @@ Latency does not police fan-out: adding questions is nearly free in time. **Budg
 
 | Item | Status in this design |
 |---|---|
-| Same decisions and rubrics | Yes. FR1–FR8 as defined in `requirements.md`. The rubric text is reusable by the L2 prompt. FR8 needs a second call **on both sides**; R3's single-call BoE undercounts both families equally |
-| Same region assumptions | Yes. The same four-region sweep and RTT rows (requirements §6.1) |
+| Same decisions and rubrics | Yes. 7 decisions (FR1–FR8 as in `requirements.md`). Headline uses the cross-doc basis: Call A at 2,000 tokens, 1,200 sensitivity, generation $0.0038 for every family (§3.2; A3 §I). FR8 needs a second call **on both sides**, and A1 also models Call A + 2 FR8 calls |
+| Same region assumptions | Yes. The same four-region sweep and RTT rows (requirements §6.1). p95 values are illustrative here; M1 models them with the same distribution family for both sides |
 | Caching wherever supported | Jev has none (JEV-004). Generation uses the LLM way's cached `claude-sonnet-5-5` (R3) |
 | Deterministic routing credited to every router | Yes. `order_status`-style code handlers, the FR5 code rules and the language-ID gate are architecture-neutral. They are not Jev wins (JEV-060 caveat) |
+| Cascades credited to both sides | Yes. J2's confidence-gated escalation has a direct LLM peer, L2c (A1). Code-for-dates (FR5) and the C1/D1 head (A3) are available to every family |
+| Same confidence definition | Yes. Thresholds use the port-calibrated p_max (A3 §A.1, §A.5), never Jev's `confidence` field or verbalized LLM scores |
+| No single-model guardrail | Yes. FR1 and FR8 are C1b ∥ J ensembles (§3.4; A3 §A.3) |
+| Same client settings and price sweep | 250 ms deadline, ≤ 1 retry, SDK defaults overridden (§3.4); Jev swept at 1×/3×/10× (§3.2) |
 | Steelman of the other side | §12 |
 
 ## 12. Steelman of the LLM way (one page)
@@ -351,7 +363,7 @@ Latency does not police fan-out: adding questions is nearly free in time. **Budg
 4. **Quality on harder tasks.** `gpt-5.6-sol` beats Jev on the vendor's *own* workflows, 74.1% vs 67.8% (JEV-042). Jev trails on Invoice Processing (JEV-046), LegalBench (JEV-083) and 77-way BANKING77 (JEV-087). Real support traffic has a long tail of ambiguous, multi-intent messages, which is where reasoning helps.
 5. **Capacity and region are better on the LLM side today.** The `gpt-6-luna` Grow tier allows 30K RPM / 180M TPM (LLM-038) against Jev's 80 req/s: at 10M/day that is 1.2× headroom vs Jev's 0.12× (requirements §5.2). In-India processing exists for some LLMs (LLM-046, LLM-053) and none for Jev; OpenAI processes in the EU (LLM-043).
 6. **Type safety is not unique to Jev.** Structured outputs guarantee schema validity (LLM-024, LLM-041), and Vals saw no malformed LLM response across 12 systems (JEV-039). The real risk on both sides is a wrong *valid* option.
-7. **Calibration needs labels on both sides beyond cold start** (JEV-083; LLM-071). A typed endpoint with probabilities already exists in the LLM family: OpenAI Decisions on `gpt-6-luna`, with EU residency, ZDR and HIPAA (LLM-044). It measured a 0.31 s median against Jev's 0.39 s in the same harness (JEV-087).
+7. **Calibration needs labels on both sides beyond cold start** (JEV-083; LLM-071). And the LLM's own vendor already sells Jev's primitive: OpenAI Decisions (`gpt-6-luna` via `/v1/decisions`, the **L2d** rung rather than the L2 baseline) has EU residency, ZDR and HIPAA (LLM-044), and measured a 0.31 s median against Jev's 0.39 s in the same harness (JEV-087). A team on the LLM way can therefore adopt typed decisions without adopting Jev.
 8. **Robustness is not a Jev advantage.** JevOut's flips hit decision models generally and transfer between them (JEV-106). An LLM guardrail can at least be told, and can reason about, why user text is data.
 9. **Organisation.** One vendor class, one skill set, one prompt toolchain, one eval harness. Hyperscaler SLAs and contract maturity are plausible advantages but are not verified in the ledger [Guessing].
 

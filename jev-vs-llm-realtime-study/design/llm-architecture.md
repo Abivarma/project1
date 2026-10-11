@@ -7,17 +7,29 @@ Voice (V-S2S and V-casc) is covered in `design/voice-architecture.md`.
 **Conventions**
 - Every number cites a ledger ID or carries [Guessing a–b].
 - All latency figures are Artificial Analysis (AA) **P50s at 10k input, probed from `us-central1`, with network included** (LLM-001). Our decision prompt is about 2.6k Claude tokens, so these figures are pessimistic for prefill.
-- **No p95 exists for any LLM decision path** (LLM-018). Every p95 here is modelled as **p95 = m × p50, with m ∈ [1.5, 2.5] [Guessing]**, and M1 must sweep m.
+- **No p95 exists for any LLM decision path** (LLM-018), and **p95 values belong to M1** (Phase 3), which uses the same distribution family on both sides.
+  - This doc gives medians.
+  - Where a p95 appears, it is a labelled *placeholder*: p95 = m × p50, with m ∈ [1.5, 2.5] [Guessing].
 - "×J1" always means the J1 batched decision call at $0.000084 per message (ECO-091), never Jev's FR8 calls (A2 models those).
+
+**Shared basis, aligned with A2 and A3** (`design/neutral-architecture.md` §I; the lead's alignment note)
+- **Workload:** 7 decisions per message in one batched call. 1,700 static + 300 dynamic o200k tokens; Claude tokenizer 1.3×, with 1.6× as the sensitivity case (ECO-007, ECO-008).
+- **J1 reference:** 2,000 tokens, with 1,200 as the sensitivity case. Price swept at 1×/3×/10×.
+- **Generation:** fixed at **$0.0038 per message on `claude-sonnet-5-5`** for every family (R3 BoE). My own derivation matches for L2m, L2 and L2c. For L1 and L1b, PLAN §2 specifies frontier generation; that is shown only as a separate variant row (§4.3).
+- **Client contract:** 250 ms per-call deadline, ≤ 1 retry within the deadline, hedge after p90, SDK defaults overridden (requirements §5.3).
+- **Confidence:** thresholds sit on the Decision Service port's **calibrated** probability.
+- **Fairness:** deterministic handlers and cascades (J2 ↔ L2c) are credited to both sides.
+- **Guardrails:** no single-model guardrail.
+- **The FR8 call split and speculative generation** are design extras on top of this basis. They are listed separately and also apply to the J designs.
 
 ## 0. Verdict in one screen
 
 | Rung | Best realistic config (decisions) | Verdict |
 |---|---|---|
-| L1 | `claude-fable-5-1` at default effort, one call per decision | Anti-pattern; it exists only to reconcile the vendor's numbers. About 22 s per decision (LLM-010) and $0.23–0.37 for decisions alone (R3 BoE). Never a headline |
+| L1 | `claude-fable-5-1` at default effort, one call per decision | Anti-pattern; it exists only to reconcile the vendor's numbers. About 22 s per decision (LLM-010) and $0.22–0.36 per message for the 7 decisions (R3 BoE). Never a headline |
 | L1b | `gpt-6-astra` or `claude-fable-5-1` at effort `low`, batched | About 3 s to the gate fields and 92–270× J1 on cost. Use it only as the **escalation target** of L2c, off the critical path |
 | L2m | `claude-sonnet-5-5` with `thinking: {type: "between_tools"}`, batched | About 1.0 s to the gate fields and 16–19× J1 on cost. Worth it only when small-tier accuracy fails the golden set (multi-hop FR5) |
-| L2 | `gpt-6-luna` (effort `none`, logprobs) as primary and `claude-haiku-5-5` (thinking `disabled`) as hedge; one batched call, rubric cached | **The fair baseline.** At price parity with J1 (0.92–1.08×, R3 BoE). **Fails NFR-1/4/6 on latency** (gate about 0.4–0.9 s median). Meets NFR-2 only with speculative generation plus the approved-opener pattern (§3.4) |
+| L2 | `gpt-6-luna` (effort `none`, logprobs) as primary and `claude-haiku-5-5` (thinking `disabled`) as hedge; one batched call, rubric cached | **The fair baseline.** At price parity with J1 at 1× (0.92–1.08×; 1.4–1.6× if Jev is 1,200 tokens; 0.09–0.36× if Jev reprices to 3–10×) (R3 BoE). **Fails NFR-1/4/6 on latency** (gate about 0.4–0.9 s median). Meets NFR-2 only with speculative generation plus the approved-opener pattern (§3.4) |
 | L2c | L2, with confidence escalation to L1b or a human | Escalation dominates its cost and tail. Sound on Luna logprobs; weak on Claude (verbalized confidence only) |
 
 **The LLM way's honest position:** it wins the System-2 half (FR7, multi-hop, multimodal, long history, EU residency) and reaches cost parity at the small tier. It loses the **critical-path decision latency**, especially the per-sentence FR8 (NFR-4, 150 ms), and the best mitigation hides that latency rather than removing it.
@@ -40,14 +52,19 @@ Voice (V-S2S and V-casc) is covered in `design/voice-architecture.md`.
 
 **Do not use Claude on Bedrock for decisions:** it has no structured outputs (LLM-025).
 
+**Scope note:** the OpenAI Decisions API (`gpt-6-luna` via `POST /v1/decisions`) is rung **L2d**, a hosted decision API covered in `design/neutral-architecture.md` §B. It is **not** this doc's LLM baseline. Every rung here is an adapter behind the same Decision Service port (names J, L2d, L2, L3, C1, D1 as in neutral §A).
+
 ## 2. Family diagram (critical path = thick `==>` edges labelled CP)
 
 ```mermaid
 flowchart LR
   U["User message"] ==>|CP| GW["Regional gateway and orchestrator"]
-  GW ==>|"CP: fire both at t0"| A["Call A: one structured-output call<br/>enum per field, rubric prefix cached<br/>fields streamed in order: inj, harm, human, opener, intent, nba, elig, urg"]
-  GW ==>|"CP: speculative"| G["FR7 speculative generation<br/>claude-sonnet-5-5, streamed into a server buffer"]
-  A ==>|"CP: gate fields FR1 and FR4"| GATE{"Gate passes?"}
+  GW ==>|"CP: t0"| PORT["Decision Service port<br/>typed Choice, Score, Noul; calibrated p"]
+  PORT ==>|"CP: L2 adapter"| A["Call A: one structured-output call<br/>enum per field, rubric prefix cached<br/>fields streamed in order: inj, harm, human, opener, intent, nba, elig, urg"]
+  PORT ==>|"CP: ensemble member"| C1B["C1b encoder: injection and self-harm<br/>in-process, see neutral doc"]
+  GW ==>|"CP: speculative, also at t0"| G["FR7 speculative generation<br/>claude-sonnet-5-5, streamed into a server buffer"]
+  A ==>|"CP: gate fields FR1 and FR4"| GATE{"Gate passes?<br/>block if either member flags"}
+  C1B ==> GATE
   GATE -->|"injection or self-harm"| SAFE["Safe template or human: fail closed"]
   GATE ==>|"CP: yes, opener_id"| OPEN["Approved opener text<br/>released to the client at once"]
   OPEN ==>|CP| C["Client stream"]
@@ -57,13 +74,13 @@ flowchart LR
   R -->|"generic intent"| BUF["Keep the draft"]
   G --> BUF
   G2 --> BUF
-  BUF -->|"per sentence"| B["Call B: FR8 output guardrail"]
-  B -->|"release or hold"| C
+  BUF -->|"per sentence"| B["FR8 ensemble: Call B on L2 plus C1b plus PII regex"]
+  B -->|"release only if all clear, else hold"| C
   A -.->|"L2c only: low confidence"| ESC["Escalate: L1b model or human"]
   A -.->|"FR5 extracted fields"| CODE["Code compares dates and amounts"]
   A -.-> LOG["FR9 decision log and metrics"]
   B -.-> LOG
-  subgraph RUNG["Which model serves Call A and Call B"]
+  subgraph RUNG["LLM adapters behind the port: which model serves Call A and Call B"]
     direction TB
     L1["L1: claude-fable-5-1, 7 calls"]
     L1B["L1b: gpt-6-astra or claude-fable-5-1, effort low"]
@@ -73,7 +90,7 @@ flowchart LR
   end
 ```
 
-**Critical path:** gateway → Call A gate fields → opener released, with generation running speculatively in parallel. Without the opener (§3.4) the critical path becomes `max(gate, generation's first sentence) + FR8` (§4.1). The syntax was checked with `mermaid.parse` (mermaid 11.4.1).
+**Critical path:** gateway → port → Call A gate fields (∥ C1b) → opener released, with generation running speculatively in parallel. Without the opener (§3.4) the critical path becomes `max(gate, generation's first sentence) + FR8` (§4.1). The syntax was checked with `mermaid.parse` (mermaid 11.4.1).
 
 ## 3. Design choices shared by every LLM rung
 
@@ -127,7 +144,7 @@ flowchart LR
 | Model | Default | Required setting | If left at the default |
 |---|---|---|---|
 | `claude-haiku-5-5` | Thinking on (adaptive), effort `medium` (LLM-026) | `thinking: {type: "disabled"}` + `output_config.effort: "low"` (≤ `high`) | First answer chunk 9.72 s at `low` and 13.40 s at `medium` (LLM-003, LLM-004). Cost 2.27× J1 with 200 thinking tokens (R3 BoE) |
-| `gpt-6-luna` | `medium` (LLM-037) | `reasoning.effort: "none"`. Logprobs and function calling work only at `none` (LLM-038, LLM-040) | No logprobs (§5), and reasoning latency of 2.83 s or more at `low` (LLM-012) |
+| `gpt-6-luna` | `medium` (LLM-037) | `reasoning.effort: "none"`. Function calling works only at `none` (LLM-038); logprobs most likely only at `none` [Likely] (LLM-040) | No logprobs (§5), and reasoning latency of 2.83 s or more at `low` (LLM-012) |
 | `claude-sonnet-5-5` | `high` | `between_tools` at effort ≤ `high` (LLM-027) | 11.87 s to the first chunk at `high` (LLM-008) |
 | `claude-opus-5-5`, `claude-fable-5-1`, `gpt-6-astra`, `gpt-6.1-sol` | Thinking always on | Lowest effort only (LLM-027). This is why L1b means "lowest effort" | Not applicable |
 
@@ -141,19 +158,25 @@ flowchart LR
 - **Approved-opener pattern.** Call A also picks `opener_id` from a pre-approved enum, for example "I can help with that refund." The opener needs no FR8 check, so it is released as soon as its field closes. While the user reads the opener, generation, FR8 and release of sentence 2 continue behind it. Sentence k+1 is checked while sentence k is read or played, so FR8 latency is hidden after the first sentence. The full argument is in the voice doc §5.
 - **Fairness:** speculation and the opener pattern are **architecture-neutral** and must also be credited to J1 and J2. Jev needs them less, because its decisions arrive sooner (JEV-028, JEV-030, JEV-031).
 
-### 3.5 Deterministic-handler routing
+### 3.5 Deterministic-handler routing and cascades (credited to both sides)
+- Cascades are symmetric: L2c here corresponds to J2 on the Jev side.
 - Call A's FR2 and FR6 enums route `order_status`, `card_arrival` and similar intents to **deterministic code**, so no generation is needed. This is the pattern in JEV-060 and must be credited to every router architecture (Critic-2 fairness rule), the LLM router included.
 - **FR5 split:** the LLM extracts enumerated fields, and code does the date and amount comparisons. That keeps eligibility auditable on both sides.
 - The LLM way's extra option: on low extraction confidence it can send multi-hop policy reasoning to L1b/L2m.
 
-### 3.6 Client settings on the real-time path
-- **Override the SDK defaults.** The `anthropic` SDK defaults to a 10-minute timeout and 2 retries (`lab/LEARNING.md`). Use `client.with_options(timeout=…, max_retries=0)` per request.
-- **No retry on 429/529.** The `retry-after` wait exceeds any real-time deadline (LLM-029). Instead, fire **one hedge** to the other L2 vendor after the observed p90, which adds about 10% to decision cost [Guessing 5–15%].
+### 3.6 Client settings on the real-time path (shared contract: requirements §5.3, NFR-6)
+- **Override the SDK defaults.** The `anthropic` SDK defaults to a 10-minute timeout and 2 retries (`lab/LEARNING.md`). Use `client.with_options(timeout=0.25, max_retries=0)` per request, and set the same overrides on the OpenAI client.
+- **Deadline 250 ms; at most 1 retry, and only if it fits inside the deadline.** With an L2 gate median of 0.4–0.9 s, the retry never fits in practice.
+- **No retry on 429/529.** The `retry-after` wait exceeds the deadline (LLM-029). Instead, fire **one hedge** to the other L2 vendor after the observed p90, which adds about 10% to decision cost [Guessing 5–15%].
 - **Circuit-break per provider** on 429, 529 and timeouts, then apply the fallback chain in §4.5.
+- **What the 250 ms contract means for LLM rungs (§4.5):**
+  - Every LLM rung misses it at the median.
+  - The contract is kept as the shared basis, and the deadline misses are reported as such.
+  - The LLM way's requested deviation, a 0.9 s gate deadline, is stated separately and **not** assumed in the shared numbers.
 
 ## 4. Per-architecture delta tables
 
-### 4.1 Per-hop latency (chat, US-West gateway; median, plus modelled p95 = 1.5–2.5× median [Guessing])
+### 4.1 Per-hop latency (chat, US-West gateway; medians. p95 rows are placeholders = 1.5–2.5× the median [Guessing]; M1 owns the p95)
 
 | Hop | L1 | L1b | L2m | L2 (Luna / Haiku) | L2c |
 |---|---|---|---|---|---|
@@ -161,7 +184,7 @@ flowchart LR
 | Call A time to first answer token | 22.17 s (Fable `high`, LLM-010) | 2.69 s Astra / 2.84 s Fable `low` (LLM-014, LLM-010) | 0.88 s (Sonnet `low`, LLM-008; `between_tools` unmeasured) | 0.83 s (LLM-011) / 0.48 s (Haiku 4.5 proxy, LLM-007). Haiku 5.5 with thinking off is unmeasured (LLM-006) | as L2 |
 | Decode to the gate fields (about 10 tokens [Guessing 6–15]) | about 0.2 s at 54 tok/s (LLM-010) | 0.19–0.24 s (42–53 tok/s) | 0.10 s (100 tok/s) | 0.08 s (126 tok/s) / 0.06–0.12 s (86.6–178 tok/s, LLM-007, LLM-003) | as L2 |
 | **Gate ready (FR1, FR4), median** | ≈ 22.4 s | ≈ 2.9–3.0 s | ≈ 1.0 s | ≈ 0.9 s / 0.5–0.6 s. A 2.6k prompt vs AA's 10k → **[Guessing 0.4–0.9 s]** (LLM-083) | same, plus escalations |
-| **Gate ready, modelled p95** | 34–56 s | 4.4–7.6 s | 1.5–2.5 s | 0.6–2.3 s | **4.8–5.4 s** when e ≥ 5% and the escalation blocks (L2 + L1b) |
+| Gate ready, p95 placeholder (m × median; M1 replaces it) | 34–56 s | 4.4–7.6 s | 1.5–2.5 s | 0.6–2.3 s | **4.8–5.4 s** when e ≥ 5% and the escalation blocks (L2 + L1b) |
 | All fields (60 tokens), median | 22–31 s (LLM-010) | 4.0–4.1 s | 1.5 s | 1.3 s / 0.8–1.2 s | escalations add 4.0–4.1 s |
 | FR8 per sentence (Call B ≈ TTFT + 10 tokens) | ≥ 22 s | about 3 s | about 1.0 s | **0.4–0.9 s [Guessing]** | as L2 |
 | NFR-1 (p95 ≤ 300 ms) | Fail | Fail | Fail | **Fail.** Flips only if the gate median is ≤ 120–200 ms; no ledger row supports that, so P1 stands for L2 | Fail |
@@ -183,18 +206,28 @@ flowchart LR
 | Cached share of call-A input | 0% | 85% | 85% | 85% | 85% |
 | Generation (FR7) | Fable: 3,000 cached + 500 uncached in, 250 out, + 500–2,000 thinking [Guessing] | frontier, + 100–300 thinking [Guessing] | Sonnet 5.5: 3,000 cached + 500 in / 250 out (R3) | same as L2m | same as L2m |
 
-### 4.3 $ per message (list prices: ECO-001, ECO-004 to ECO-006, ECO-013 to ECO-015; R3 BoE token shape; FR8 = 2 calls per message [Guessing 1–4])
+### 4.3 $ per message (list prices: ECO-001, ECO-004 to ECO-006, ECO-013 to ECO-015; R3 BoE token shape)
 
-| $ per message | L1 | L1b | L2m | L2 | L2c (e = escalation rate [Guessing 5–30%]) |
+**A. Shared basis:** 7 decisions in one batched call, plus generation fixed at $0.0038 on `claude-sonnet-5-5`. These figures are comparable with A2 and A3.
+
+| $ per message | L1 | L1b | L2m | L2 (Luna / Haiku) | L2c (e = escalation rate [Guessing 5–30%]) |
 |---|---|---|---|---|---|
-| Call A | $0.22–0.36 (R3) | Opus 5.5 $0.0092; Fable $0.0225; Astra ≥ $0.0077, or $0.013–0.023 with 100–300 reasoning tokens (R3, ECO-020) | Sonnet $0.0016; Sol ≥ $0.00137 (R3) | **Luna $0.000077 / Haiku $0.000091** (R3) | base + e × $0.0092 (Opus 5.5 L1b) |
-| FR8 (2 calls) | ≥ $0.014 | Opus $0.0058; Fable $0.0143; Astra $0.0061 | $0.0009 | $0.000060 / $0.000050 | as L2 |
-| **Decisions only** | **$0.23–0.37** | **$0.014–0.037** | **$0.0024–0.0025** | **$0.000137 / $0.000141** | Luna logprobs $0.0006–0.0029; Haiku verbalized $0.0006–0.0029; Haiku k = 5: $0.0010–0.0033 |
-| Call A × J1 ($0.000084, ECO-091) | 2,600–4,300× | 92–270× | 16–19× | **0.92 / 1.08×** | ≈ 7–35× |
-| Generation (FR7) | $0.043–0.118 (Fable `high`) | Opus $0.0096–0.0136; Fable $0.023–0.033 | $0.0038 (R3) | $0.0038 (R3) | $0.0038 |
-| Speculation waste (§3.4) | — | — | +$0.00018–0.00054 | +$0.00018–0.00054 | same |
-| **Decisions + generation** | **$0.28–0.49** | **$0.025–0.029 (Opus); $0.060–0.070 (Fable)** | **$0.0063** | **$0.0039** (+ speculation) | **$0.0044–0.0071** |
-| Decision share of the bill | 76–84% | 52–61% (Opus) | 40% | **3.6%** | 14–43% |
+| Call A (7 decisions) | $0.22–0.36 (R3) | Astra ≥ $0.0077, or $0.013–0.023 with 100–300 reasoning tokens [Guessing]; Opus 5.5 $0.0092; Fable $0.0225 (R3, ECO-020) | Sol ≥ $0.00137; Sonnet $0.0016 (R3) | **$0.000077 / $0.000091** (R3) | base + e × $0.0092 (Opus 5.5 escalation): $0.00054–0.0032. The upper end is Haiku with k = 5 |
+| × J1 at 1× ($0.000084, ECO-091) | 2,600–4,300× | 92–270× | 16–19× | **0.92 / 1.08×** | 6–38× |
+| × J1 at 3× / 10× price (PLAN §4) | 870–1,430× / 260–430× | 31–89× / 9–27× | 5.4–6.4× / 1.6–1.9× | **0.31–0.36× / 0.09–0.11×** | 2.1–13× / 0.6–3.8× |
+| × J1 if Jev is 1,200 tokens ($0.000050, R3 BoE) | — | — | — | **1.4× (Luna) / 1.6× (Haiku)**, because the static rubric shrinks proportionally (R3 BoE) | — |
+| Generation (FR7), shared | $0.0038 | $0.0038 | $0.0038 | $0.0038 | $0.0038 |
+| **Decisions + generation** | **$0.22–0.36** | **$0.012–0.026** (Opus $0.013) | **$0.0052–0.0054** | **$0.00388 / $0.00389** (J1 at 1×/3×/10×: $0.00388 / $0.00405 / $0.00464) | **$0.0043–0.0070** |
+| Decision share of the bill | 98–99% | 67–86% | 27–30% | **2.0–2.3%** (J1: 2.2% / 6.2% / 18%) | 12–46% |
+
+**B. Design extras on top of the shared basis.** FR8 and speculation apply to the J designs too: Jev also needs separate FR8 requests.
+
+| Add-on, $ per message | L1 | L1b | L2m | L2 (Luna / Haiku) | L2c |
+|---|---|---|---|---|---|
+| FR8 as 2 separate calls with a padded cached prefix (§3.2) [Guessing 1–4 calls] | ≥ $0.014 | Opus $0.0058; Fable $0.0143; Astra $0.0061 | $0.0009 | $0.000060 / $0.000050 | as L2 |
+| Speculative-generation waste (§3.4) | — | — | +$0.00018–0.00054 | +$0.00018–0.00054 | same |
+| PLAN §2 variant: frontier generation instead of $0.0038 | Fable `high`: $0.043–0.118 [Guessing 500–2,000 thinking tokens] | Opus `low` $0.0096–0.0136; Fable `low` $0.023–0.033 [Guessing 100–300 thinking] | — | — | — |
+| **Full design total** (A + B, with PLAN §2 generation for L1/L1b) | $0.28–0.49 | $0.025–0.029 (Opus); $0.060–0.070 (Fable) | $0.0063 + waste | $0.0039 + waste | $0.0044–0.0071 + waste |
 
 **Context:**
 - The uncached small tier costs $0.00023–0.00029 for call A, 2.7–3.5× J1 (R3 BoE).
@@ -204,7 +237,9 @@ flowchart LR
 
 ### 4.4 Rate-limit headroom at peak (limit ÷ demand; ≥ 1.5 required, requirements §5)
 
-Peak load is 40.5, 405 and 2,025 msg/s for 1M, 10M and 50M messages/day (requirements §5). This design sends 3 decision requests per message: call A plus 2 FR8 calls.
+Peak load is 40.5, 405 and 2,025 msg/s for 1M, 10M and 50M messages/day (requirements §5).
+- The **shared basis** is 1 batched request per message (requirements §5.2).
+- With the FR8 split, this design sends 3: call A plus 2 FR8 calls. Jev needs separate FR8 requests too.
 
 | Rung / model / tier | 1M/day | 10M/day | 50M/day | Binding limit |
 |---|---|---|---|---|
@@ -226,9 +261,11 @@ Peak load is 40.5, 405 and 2,025 msg/s for 1M, 10M and 50M messages/day (require
 
 | Item | L1 | L1b | L2m | L2 | L2c |
 |---|---|---|---|---|---|
-| Per-call deadline | Not usable in real time | Async only; escalation deadline 6 s [Guessing 4–8] | Gate 1.5 s [Guessing] | **Gate 0.9 s, all fields 1.5 s, FR8 1.0 s** [Guessing; reset from the shadow p95] | Escalation 6 s (blocking only for FR4/FR5, behind a "let me check" opener) |
-| NFR-6 (250 ms per call) | **Infeasible for every LLM rung** (gate median ≥ 0.4 s, LLM-083). This is a documented deviation | | | | |
-| Retry policy | 0 retries on 429/529/5xx; **1 hedge** to the other vendor after the p90; 1 retry only on a connection reset, and only if it fits the deadline | | | | |
+| Per-call deadline, shared contract (NFR-6) | 250 ms | 250 ms | 250 ms | 250 ms | 250 ms |
+| Result under the 250 ms contract | Always misses (LLM-010) | Always misses (LLM-014, LLM-010) | Misses at the median (LLM-008) | **Misses at the median** (gate 0.4–0.9 s, LLM-083) [Guessing: most calls] | As L2; escalations always miss |
+| What a miss does (shared basis) | §4.1 fallback: C1a for FR2/FR3/FR6; FR1 rests on the C1b member alone at a stricter τ (neutral §A.3); FR4/FR5 fail closed | same | same | same. The late LLM answer is still logged and used for **async** fields (FR3, FR6, FR5 multi-hop) | same |
+| **Requested LLM deviation (not in the shared numbers)** | — | async escalation deadline 6 s [Guessing 4–8] | gate 1.5 s [Guessing] | **gate 0.9 s, all fields 1.5 s, FR8 1.0 s** [Guessing; reset from the shadow p95]. This is only workable because nothing reaches the user before the gate (opener and speculation, §3.4) | escalation 6 s, blocking only for FR4/FR5, behind a "let me check" opener |
+| Retry policy | ≤ 1 retry, only if it fits the deadline (in practice never on L2). 0 retries on 429/529/5xx; **1 hedge** to the other vendor after the p90. SDK defaults overridden (§3.6) | | | | |
 | Fallback chain | L1b → L2 | → L2 | → L2 → C1 | Luna ⇄ Haiku hedge → C1a in-process for FR2, FR3, FR6 (about 1.5 ms [LAB, illustrative], `lab/results/c1_sweep.csv`) → §4.1 defaults | low confidence → L1b or a human; timeout → the L2 chain |
 
 **LLM-specific triggers that count as "error" under §4.1:**
@@ -240,14 +277,14 @@ Peak load is 40.5, 405 and 2,025 msg/s for 1M, 10M and 50M messages/day (require
 
 | Decision | Timeout / 429 / 529 / invalid output | Refusal | Low confidence (L2c) |
 |---|---|---|---|
-| FR1 injection, self-harm | **Fail closed** (safe template or human) | **Fail closed.** Treat a refusal on the input as a positive signal | Escalate, holding the reply |
+| FR1 injection, self-harm. **Ensemble:** L2 call A ∥ C1b; block if either flags (neutral §A.3) | **Fail closed** (safe template or human); the C1b member alone at a stricter τ | **Fail closed.** Treat a refusal on the input as a positive signal | Escalate, holding the reply |
 | FR1 PII present | Fail open (redact downstream) | Fail open | Fail open |
 | FR2 intent | C1a, then the generic LLM handler | C1a | Escalate or C1a |
 | FR3 urgency | Fail open (default priority) | Fail open | Fail open |
 | FR4 needs human | **Fail closed** (offer a human) | **Fail closed** | **Fail closed** |
 | FR5 eligibility | **Fail closed** (no automatic refund) | **Fail closed** | Escalate to L1b (multi-hop), else human |
 | FR6 next-best action | Fail open (default action) | Fail open | Fail open |
-| FR8 output guardrail | **Fail closed** (hold the sentence, use a safe phrase) | **Fail closed** | **Fail closed** |
+| FR8 output guardrail. **Ensemble:** L2 Call B ∥ C1b ∥ PII regex; release only if all clear | **Fail closed** (hold the sentence, use a safe phrase) | **Fail closed** | **Fail closed** |
 
 ## 5. Confidence per rung: how it is obtained, ECE, and L2c thresholds
 
@@ -269,6 +306,7 @@ Peak load is 40.5, 405 and 2,025 msg/s for 1M, 10M and 50M messages/day (require
 6. Compare **like-for-like**. Anand's pilot mixed verbalized LLM confidence with decision-model label probabilities, so its ECEs are not comparable (Critic-1 V16).
 
 **What this means for the L2c thresholds:**
+- **Thresholds act only on the Decision Service port's calibrated probability** (step 4's map, keyed by backend × pinned version × decision type, neutral §A.5). Never on raw p_max, a verbalized bucket or a vote fraction, and never compared across vendors' native "confidence" fields.
 - Thresholds are set on the **risk–coverage curve** of the calibration split, to meet NFR-7: ≥ 97% accurate at ≥ 70% automation. Escalation rate e = 1 − coverage.
 - **On Luna:** continuous calibrated scores → a smooth risk–coverage curve → the lowest e for a given error budget. RLHF logprobs are miscalibrated before recalibration (GPT-4: ECE 0.007 → 0.074 after RLHF, LLM-071), so labels are mandatory. This is the same "labels are needed" caveat that applies to Jev's thresholds (Critic-1 finding 6).
 - **On Claude:**
@@ -334,7 +372,7 @@ Peak load is 40.5, 405 and 2,025 msg/s for 1M, 10M and 50M messages/day (require
 
 | Risk | Design |
 |---|---|
-| **Prompt injection aimed at the LLM guardrail itself** | The user text is data inside a delimited field after the cached prefix. Call A has **no tools**, and every output is an enum, so injection can only flip an enum and cannot exfiltrate anything. Natural context additions flip 61–73% of correct decisions in decision models (JEV-106, Critic-1 new row); LLM-specific rates are unmeasured here, so assume similar exposure. **FR1 injection must never rest on one model**: use a diverse ensemble (Luna + Haiku + a C1b encoder), OR-combined, failing closed. Cisco found a fine-tuned 1B encoder beats a decision model at strict FPR (JEV-105, Critic-1 new row). Keep a red-team slice in the golden set |
+| **Prompt injection aimed at the LLM guardrail itself** | The user text is data inside a delimited field after the cached prefix. Call A has **no tools**, and every output is an enum, so injection can only flip an enum and cannot exfiltrate anything. Natural context additions flip 61–73% of correct decisions in decision models (JEV-106, Critic-1 new row); LLM-specific rates are unmeasured here, so assume similar exposure. **No single-model guardrail**: FR1 and FR8 use the C1b ∥ decision-model ensemble from neutral §A.3 (here L2 ∥ C1b; optionally a second LLM vendor for diversity), OR-combined, failing closed. Cisco found a fine-tuned 1B encoder beats a decision model at strict FPR (JEV-105, Critic-1 new row). Keep a red-team slice in the golden set |
 | PII to a third party | Redact identifiers before Call A where the decision does not need them. Use DPAs. **ZDR:** Anthropic by arrangement; caching is ZDR-eligible; structured outputs are "qualified" because the schema is cached ≤ 24 h (LLM-032). **`claude-fable-5-1` requires 30-day retention, so L1 is incompatible with ZDR** (LLM-032). OpenAI: abuse logs ≤ 30 days; ZDR by approval (LLM-043); without ZDR the default cache retention is 24 h (ECO-017). Gemini API: no ZDR; Vertex via an exception (LLM-054) |
 | **US residency** | Claude `inference_geo: "us"` at 1.1× (LLM-031, ECO-011); OpenAI US regional processing (LLM-043) |
 | **EU residency (an LLM-way advantage)** | `claude-haiku-5-5` on Google Cloud in the EU multi-region (LLM-035) or OpenAI EU regional processing at +10% (LLM-043). Decisions then stay in-region (≈ 2 ms RTT, ECO-072) instead of crossing to the US (126–154 ms, ECO-068). Jev processes only in the US (JEV-015) |
@@ -363,6 +401,12 @@ Peak load is 40.5, 405 and 2,025 msg/s for 1M, 10M and 50M messages/day (require
 | Deterministic-handler routing credited to all routers | Yes (§3.5) |
 | Speculation and approved opener credited to all architectures | Yes (§3.4) |
 | Known biases against LLMs in the Jev evidence | Default reasoning and uncached costs in vendor evals; 0% cache hits in Suraj's test; 16-way pool contention in the cookbook; 8 vs 4 in-flight requests at Vals (Critic-1 balance finding 5) |
+| Shared numeric basis (7 decisions; J1 at 2,000 tokens with 1,200 sensitivity; Jev at 1×/3×/10×; generation $0.0038 for all) | Yes (§4.3 A). Frontier generation for L1/L1b appears only as a PLAN §2 variant row |
+| Same client contract (250 ms, ≤ 1 retry, SDK overrides) | Yes (§3.6, §4.5). Misses are reported; the LLM deviation is stated separately |
+| Thresholds on the port's calibrated probability | Yes (§5) |
+| Cascades credited to both sides (L2c ↔ J2) | Yes (§3.5) |
+| No single-model guardrail | Yes (§4.5, §9) |
+| OpenAI Decisions treated as L2d, not as the LLM baseline | Yes (§1) |
 | Steelman of the other side attached | Yes (§12) |
 
 ## 12. Steelman of the Jev way (the strongest honest case)
