@@ -20,3 +20,13 @@
 | `tests/` | Both | Each agent tests its own modules. Name files `test_a_*.py` (LAB-A) or `test_b_*.py` (LAB-B) |
 | `LEARNING.md` | LAB-A, with a section from LAB-B on the Jev and Claude backends | Mac setup, exercises |
 | `requirements.txt` | Both (append only) | — |
+| `jevlab/leakage.py` | LAB-B | `assert_no_lab_or_mock_in(path)` LL5 leakage check; CLI `python -m jevlab.leakage STUDY.md` |
+| `jevlab/backends/_vendor.py` | LAB-B | Shared provenance/key helpers for the jev and claude backends |
+
+## Contract changes (lead, 2026-10-11, answering CONTRACT-REQUESTS 1–6)
+1. `RunResult` gains `n_per_class` and `train_time_s` (both default None).
+2. Optional `fit(task) -> dict` hook. If it exists, the runner calls it before `probe()` and records `train_time_s`.
+3. `Prediction` gains `usd` (default None). Vendor backends set it; the runner computes `usd_per_1k_decisions` as 1000 × mean(usd) when it is present.
+4. The one CSV convention is `RunResult.to_row()`: `accuracy_ci95` becomes `accuracy_ci95_lo` and `accuracy_ci95_hi`. All writers (LAB-A runner, LAB-B c1 sweep) must use it. c1 extra columns (`n_per_class_min`, `n_per_class_max`, `n_train`) may follow as extras.
+5. The runner dispatches `kind: jev | claude | c1` to `jevlab.backends.<kind>.make_backend(entry)`. LAB-A implements this.
+6. The ownership rows above are added.

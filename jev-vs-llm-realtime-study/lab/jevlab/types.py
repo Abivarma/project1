@@ -55,6 +55,7 @@ class Prediction:
     provenance: str  # see module docstring
     cold: bool = False  # first call after model load / connection open
     captured_mass: float | None = None  # prob mass covered by returned top-k logprobs
+    usd: float | None = None  # per-decision $ from vendor usage x list price (params documented in config)
     raw: dict = field(default_factory=dict)  # backend-specific debug info (not for tables)
 
 
@@ -73,6 +74,10 @@ class DecisionBackend(Protocol):
         """Predict a label for each item. labels_order permutes option presentation
         (used for the option-order permutation test); default = task.labels."""
         ...
+
+    # Optional hook for trainable backends (C1a). The runner calls it if present
+    # (hasattr(backend, "fit")) before probe(), and times it as train_time_s:
+    #     def fit(self, task: Task) -> dict: ...
 
 
 @dataclass
@@ -107,3 +112,18 @@ class RunResult:
     mean_captured_mass: float | None
     permutation_flip_rate: float | None
     invalid_rate: float  # label None / schema-invalid / refused
+    n_per_class: int | None = None  # labelled examples per class used for training (C1a sweep)
+    train_time_s: float | None = None
+
+    def to_row(self) -> dict:
+        """The one CSV convention for all results files: tuples are split into
+        <name>_lo / <name>_hi columns; None is written as an empty cell."""
+        from dataclasses import asdict
+
+        row: dict = {}
+        for k, v in asdict(self).items():
+            if isinstance(v, (tuple, list)) and len(v) == 2:
+                row[f"{k}_lo"], row[f"{k}_hi"] = v
+            else:
+                row[k] = v
+        return row
