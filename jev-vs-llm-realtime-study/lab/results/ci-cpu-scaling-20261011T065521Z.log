@@ -41,3 +41,14 @@
 2026-10-11 07:09:56,744 INFO ======================================================================
 2026-10-11 07:09:56,744 INFO backend llama-server-3b:json_schema
 2026-10-11 07:10:02,100 INFO probe OK: {"backend": "llama-server-3b", "server": "llama-server", "mode": "json_schema", "model": "qwen2.5-3b-instruct-q4_k_m", "backend_version": "llama-server b1-0c1e570", "quant": "Q4_K_M", "capabilities": {"supports_json_schema": true, "supports_logprobs": true, "max_top_logprobs": 20, "logprob_mode": "pre_constraint", "label_scoring": "top_logprobs", "logprobs_endpoint": "chat_completions", "token_format": "text", "label_position": "search"}, "provenance": "LAB:llama-server-3b:qwen2.5-3b-instruct-q4_k_m:Q4_K_M:linux-x86_64-4vcpu-cpu", "json_constraint": "json_schema (grammar-enforced)", "cold_latency_s": 3.421057515999564, "probe_latencies_s": [3.421057515999564, 0.97505122199982, 0.95681427099953]}
+2026-10-11 07:14:48,737 INFO predicted 160 cal + 120 test items in 286.6s
+2026-10-11 07:15:48,832 INFO permutation flip rate (k=2, n=30, first permutation = reversed order): 0.117
+2026-10-11 07:15:48,847 INFO usd_per_1k_decisions=0.034089847813445935 (local $-equivalent formula)
+2026-10-11 07:15:48,856 INFO T=2.013 fitted on 160 calibration items (NLL 0.850 -> 0.609)
+2026-10-11 07:15:48,856 INFO ECE(10 equal-mass bins) 0.1406 -> 0.1027 ; Brier 0.3348 -> 0.3019 ; AURC 0.0492 ; acc@50%coverage 0.967
+2026-10-11 07:15:48,857 INFO Jev-style Choice confidence (emulated formula) mean=0.963 ; share >= 0.5: 0.98
+2026-10-11 07:15:48,857 INFO RESULT llama-server-3b:json_schema acc=0.825 [0.758, 0.892] macroF1=0.821 p50=0.974s p95=1.177s cold=3.421s invalid=0.000 captured=n/a flip=0.117
+2026-10-11 07:15:49,664 INFO ======================================================================
+2026-10-11 07:15:49,664 INFO wrote ci-cpu-scaling-20261011T065521Z.csv (8 rows), ci-cpu-scaling-20261011T065521Z.log, ci-cpu-scaling-20261011T065521Z_predictions.jsonl.gz, ci-cpu-scaling-20261011T065521Z_reliability.png
+2026-10-11 07:15:49,664 INFO total wall time 1228.0s
+2026-10-11 07:15:49,664 INFO LAB numbers: illustrative only (tiny local model / CPU or Mac, public dataset). Not production numbers, not Jev numbers. The logprob path is a 'Jev-style decision primitive (emulation)', never 'local Jev'.

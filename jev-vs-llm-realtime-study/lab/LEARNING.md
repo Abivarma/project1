@@ -222,6 +222,27 @@ What the run teaches (LAB, 0.5B model):
 
 ---
 
+## Hands-on lab: model-size scaling (LAB, illustrative)
+
+Run `ci-cpu-scaling-20261011T065521Z` (config `configs/ci-cpu-scaling.yaml`). The task is the same CLINC150 banking task (15 intents + out-of-scope; chance is 0.0625), with the same prompts and the same split. Every model is a Qwen2.5-Instruct Q4_K_M GGUF served by llama-server on 4 Linux vCPUs. The 0.5B row comes from the smoke run `ci-cpu-20261011T062914Z`. The 3B run used a seeded subset with n_test = 120, so its 95% CIs are wider.
+
+| Model | Mode | n_test | Accuracy | ECE raw → after T (10 equal-mass bins) | p50 latency | Order-flip rate | Captured mass |
+|---|---|---|---|---|---|---|---|
+| 0.5B | JSON schema (LLM way) | 240 | 0.533 | 0.127 → 0.155 | 0.34 s | 0.17 | n/a |
+| 0.5B | Letter-code logprobs (Jev-style emulation) | 240 | 0.116 | 0.355 → 0.102 | 0.16 s | 0.91 | 0.997 |
+| 1.5B | JSON schema | 240 | **0.850** | 0.067 → 0.038 | 0.58 s | 0.05 | n/a |
+| 1.5B | Letter-code logprobs | 240 | 0.495 | 0.226 → 0.091 | 0.23 s | 0.59 | 0.898 |
+| 3B | JSON schema | 120 | 0.825 (CI 0.76–0.89) | 0.140 → 0.102 | 0.97 s | 0.11 | n/a |
+| 3B | Letter-code logprobs | 120 | **0.683** (CI 0.60–0.77) | 0.231 → **0.064** | 0.37 s | 0.45 | 0.987 |
+| — | C1a TF-IDF + LR, 50 labels/class (reference) | 240 | 0.916 | 0.123 → 0.018 | about 1 ms | 0 | n/a |
+
+**Lessons** (these hold for this task and these small models only; they are not production or Jev numbers):
+1. **Letter-code scoring improves steeply with model size: 0.12 → 0.50 → 0.68.** Even so, at ≤ 3B it trails JSON-mode generation on accuracy. The single-forward-pass "decision primitive" needs a model that has learned to map the question to a *code*, and small models mostly pick by position. On a Mac, try 7–8B (16 GB RAM) and 14B (24–32 GB) to see whether the gap closes. That is exercise 1.
+2. **Position bias is the dominant failure of code scoring.** Flip rates of 0.91 → 0.59 → 0.45 under reversed option order dwarf JSON mode's 0.05–0.17. Jev's own docs list option-order bias as a known failure mode (ledger JEV rows). Any Choice-style decider needs a permutation check.
+3. **Temperature scaling fixes the code-scoring distribution but not JSON mode.** For code scoring, ECE fell 0.36→0.10, 0.23→0.09 and 0.23→0.06, because it is a real distribution. JSON mode's "confidence" is one top-label probability with the rest spread uniformly, so scaling barely helps. The fit used 160 labelled calibration items, which is exactly the label cost Jev claims to avoid.
+4. **Code scoring is about 2.5× faster than JSON generation at the same size** (0.23 s vs 0.58 s at 1.5B; 0.37 s vs 0.97 s at 3B on CPU). One forward pass and no decoding is the mechanical reason decision models are fast. It is also why the latency of Jev and similar models stays nearly flat as you add questions.
+5. **The trained classifier still wins this closed, labelled task**: 0.92 accuracy and about 0.02 ECE after scaling, at about 1 ms. With labels and a stable intent set, that is the bar any zero-shot decider must clear (hypothesis P3).
+
 ## Exercises
 
 Each exercise says what to change, what to look at, and what you should expect. "Expected" comes from the smoke run here (tiny model, CPU) or from first principles; your Mac and your model will move the numbers, and that is the point.
